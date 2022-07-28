@@ -1,3 +1,3 @@
 # dota-gsi
 
-A library built with Rust for Dota 2's Game State Integration.
+A Rust library for Dota 2's Game State Integration.
