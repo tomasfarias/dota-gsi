@@ -4,7 +4,7 @@ use tokio::net::TcpListener;
 
 pub mod components;
 
-const OK: &str = "HTTP/1.1 200 OK";
+const OK: &str = "HTTP/1.1 200 OK\nContent-Type: text/html";
 
 pub struct GSIServer {
     uri: String,
