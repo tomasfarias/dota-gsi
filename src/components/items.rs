@@ -290,20 +290,18 @@ impl<'de> Deserialize<'de> for Items {
                         name: v.name,
                         purchaser: v
                             .purchaser
-                            .ok_or(ItemsError::MissingRequiredField(
-                                "purchaser".to_owned(),
-                                container,
-                            ))
+                            .ok_or_else(|| {
+                                ItemsError::MissingRequiredField("purchaser".to_owned(), container)
+                            })
                             .map_err(de::Error::custom)?,
                         contains_rune: v.contains_rune,
                         can_cast: v.can_cast,
                         cooldown: v.cooldown,
                         passive: v
                             .passive
-                            .ok_or(ItemsError::MissingRequiredField(
-                                "passive".to_owned(),
-                                container,
-                            ))
+                            .ok_or_else(|| {
+                                ItemsError::MissingRequiredField("passive".to_owned(), container)
+                            })
                             .map_err(de::Error::custom)?,
                         charges: v.charges,
                     },
