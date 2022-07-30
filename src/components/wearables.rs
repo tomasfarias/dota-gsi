@@ -48,5 +48,4 @@ impl Serialize for WearableID {
 pub enum GameWearables {
     Spectating(HashMap<Team, HashMap<PlayerID, u32>>),
     Playing(HashMap<WearableID, u32>),
-    NotInGame {},
 }

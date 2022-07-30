@@ -160,7 +160,6 @@ impl fmt::Display for ItemSlot {
 pub enum GameItems {
     Playing(Items),
     Spectating(HashMap<Team, HashMap<PlayerID, Items>>),
-    NotInGame {},
 }
 
 #[derive(Serialize, Debug)]
@@ -398,5 +397,14 @@ mod tests {
         }"#;
 
         let items: Items = serde_json::from_str(json_str).expect("Failed to deserialize items");
+
+        assert!(matches!(
+            items.teleport,
+            ItemSlot::Full { index: 0, item: _ }
+        ));
+
+        assert!(items.is_inventory_empty());
+        assert!(items.is_stash_empty());
+        assert!(items.is_neutral_empty());
     }
 }

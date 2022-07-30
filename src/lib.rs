@@ -4,7 +4,7 @@ use tokio::net::TcpListener;
 
 pub mod components;
 
-const OK: &str = "HTTP/1.1 200 OK\nContent-Type: text/html";
+const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
 pub struct GSIServer {
     uri: String,
@@ -35,7 +35,7 @@ impl GSIServer {
 
         loop {
             let (mut socket, addr) = listener.accept().await?;
-            log::debug!("Accepted: {}", addr);
+            log::info!("Accepted: {}", addr);
 
             tokio::spawn(async move {
                 log::debug!("Task spawned");
@@ -64,6 +64,7 @@ impl GSIServer {
                     log::error!("failed to write to socket; err = {:?}", e);
                     return;
                 };
+
                 log::debug!("Raw request: {:?}", buf);
                 let amt = parse_headers(&buf);
 

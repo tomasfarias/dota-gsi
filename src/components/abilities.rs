@@ -73,7 +73,6 @@ impl Serialize for AbilityID {
 pub enum GameAbilities {
     Spectating(HashMap<Team, HashMap<PlayerID, HashMap<AbilityID, Ability>>>),
     Playing(HashMap<AbilityID, Ability>),
-    NotInGame {},
 }
 
 #[cfg(test)]
@@ -139,5 +138,15 @@ mod tests {
       ]"#;
         let abilities: Vec<Ability> =
             serde_json::from_str(json_str).expect("Failed to deserialize Abilities");
+
+        assert_eq!(abilities.len(), 6);
+        assert!(abilities.iter().all(|a| a.ability_active));
+        assert!(abilities.iter().all(|a| a.can_cast));
+        assert!(abilities
+            .iter()
+            .any(|a| a.name == "plus_guild_banner".to_owned()));
+        assert!(abilities
+            .iter()
+            .any(|a| a.name == "marci_unleash".to_owned()));
     }
 }

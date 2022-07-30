@@ -141,7 +141,6 @@ impl<'de> Deserialize<'de> for Player {
 pub enum GamePlayers {
     Spectating(HashMap<Team, HashMap<PlayerID, PlayerInformation>>),
     Playing(PlayerInformation),
-    NotInGame {},
 }
 
 #[cfg(test)]
@@ -151,6 +150,7 @@ mod tests {
     #[test]
     fn test_players_deserialize() {
         let json_str = r#"{
+    "team2": {
         "player0": {
             "activity": "playing",
             "assists": 5,
@@ -526,10 +526,13 @@ mod tests {
             "wards_purchased": 4,
             "xpm": 322
         }
-    }"#;
+    }
+}"#;
 
         let players: GamePlayers =
             serde_json::from_str(json_str).expect("Failed to deserialize Players");
+
+        assert!(matches!(players, GamePlayers::Spectating(_)));
     }
 
     #[test]

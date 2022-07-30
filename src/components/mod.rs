@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{de, de::Error, Deserialize, Serialize};
+use serde_json::{map, Value};
 
 pub mod abilities;
 pub mod buildings;
@@ -127,18 +127,47 @@ impl fmt::Display for Map {
     }
 }
 
+fn empty_map_as_none<'de, D, T>(de: D) -> Result<Option<T>, D::Error>
+where
+    D: de::Deserializer<'de>,
+    T: de::DeserializeOwned + std::fmt::Debug,
+{
+    println!("HEY!");
+    let opt = Option::<map::Map<String, Value>>::deserialize(de)?;
+
+    match opt {
+        None => Ok(None),
+        Some(m) => {
+            println!("{:?}, {}", m, m.is_empty());
+            if m.is_empty() {
+                println!("HEY!");
+
+                Ok(None)
+            } else {
+                let res: T = serde_json::from_value(Value::Object(m)).map_err(D::Error::custom)?;
+                println!("{:?}", res);
+                Ok(Some(res))
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct GameState {
     provider: Provider,
+    #[serde(default, deserialize_with = "empty_map_as_none")]
     buildings: Option<HashMap<Team, Buildings>>,
     map: Option<Map>,
-    #[serde(alias = "player")]
-    players: GamePlayers,
-    #[serde(alias = "hero")]
+    #[serde(alias = "player", default, deserialize_with = "empty_map_as_none")]
+    players: Option<GamePlayers>,
+    #[serde(alias = "hero", default, deserialize_with = "empty_map_as_none")]
     heroes: Option<GameHeroes>,
+    #[serde(default, deserialize_with = "empty_map_as_none")]
     abilities: Option<GameAbilities>,
+    #[serde(default, deserialize_with = "empty_map_as_none")]
     items: Option<GameItems>,
     draft: Option<HashMap<Team, HashMap<PlayerID, Value>>>,
+    #[serde(default, deserialize_with = "empty_map_as_none")]
     wearables: Option<GameWearables>,
 }
 
@@ -152,6 +181,14 @@ impl GameState {
         } else {
             None
         }
+    }
+
+    pub fn get_heroes(&self) -> Option<&GameHeroes> {
+        self.heroes.as_ref()
+    }
+
+    pub fn get_players(&self) -> Option<&GameHeroes> {
+        self.heroes.as_ref()
     }
 
     pub fn get_hero(&self) -> Option<&Hero> {
@@ -202,31 +239,32 @@ impl fmt::Display for GameState {
             writeln!(f, "{}", map)?;
         }
 
-        match &self.players {
-            GamePlayers::NotInGame {} => (),
-            GamePlayers::Playing(p) => {
-                writeln!(f, "{}\n{}", p.team_name, p.name)?;
+        if let Some(players) = &self.players {
+            match players {
+                GamePlayers::Playing(p) => {
+                    writeln!(f, "{}\n{}", p.team_name, p.name)?;
 
-                if let Some(hero) = self.get_hero() {
-                    writeln!(f, "{}", hero)?;
+                    if let Some(hero) = self.get_hero() {
+                        writeln!(f, "{}", hero)?;
+                    }
+
+                    if let Some(items) = self.get_items() {
+                        writeln!(f, "{}", items)?;
+                    }
                 }
+                GamePlayers::Spectating(i) => {
+                    for (team, players) in i.iter() {
+                        writeln!(f, "{}", team)?;
+                        for (id, player) in players.iter() {
+                            writeln!(f, "{}", player.name)?;
 
-                if let Some(items) = self.get_items() {
-                    writeln!(f, "{}", items)?;
-                }
-            }
-            GamePlayers::Spectating(i) => {
-                for (team, players) in i.iter() {
-                    writeln!(f, "{}", team)?;
-                    for (id, player) in players.iter() {
-                        writeln!(f, "{}", player.name)?;
+                            if let Some(hero) = self.get_team_player_hero(team, id) {
+                                writeln!(f, "{}", hero)?;
+                            }
 
-                        if let Some(hero) = self.get_team_player_hero(team, id) {
-                            writeln!(f, "{}", hero)?;
-                        }
-
-                        if let Some(items) = self.get_team_player_items(team, id) {
-                            writeln!(f, "{}", items)?;
+                            if let Some(items) = self.get_team_player_items(team, id) {
+                                writeln!(f, "{}", items)?;
+                            }
                         }
                     }
                 }
@@ -259,10 +297,10 @@ mod tests {
         let gs: GameState =
             serde_json::from_str(json_str).expect("Failed to deserialize GameState");
 
-        println!("{:?}", gs.players);
-        //assert!(gs.players);
+        assert!(gs.players.is_none());
         assert!(gs.map.is_none());
         assert!(gs.heroes.is_none());
+        assert_eq!(gs.provider.name, "Dota 2".to_owned());
     }
 
     #[test]
@@ -635,6 +673,7 @@ mod tests {
             serde_json::from_str(json_str).expect("Failed to deserialize GameState In Progress");
         let heroes = gs.heroes.as_ref().unwrap();
         let wearables = gs.wearables.as_ref().unwrap();
+        let players = gs.players.as_ref().unwrap();
 
         assert!(matches!(
             gs.map.as_ref().unwrap().game_state,
@@ -655,7 +694,7 @@ mod tests {
             panic!("Failed to deserialize wearables");
         }
 
-        assert!(matches!(gs.players, GamePlayers::Playing(_)));
+        assert!(matches!(players, GamePlayers::Playing(_)));
         assert!(gs.get_items().is_some());
     }
 

@@ -55,7 +55,6 @@ impl fmt::Display for Hero {
 pub enum GameHeroes {
     Spectating(HashMap<Team, HashMap<PlayerID, Hero>>),
     Playing(Hero),
-    NotInGame {},
 }
 
 #[cfg(test)]
