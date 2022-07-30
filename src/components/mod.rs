@@ -132,20 +132,15 @@ where
     D: de::Deserializer<'de>,
     T: de::DeserializeOwned + std::fmt::Debug,
 {
-    println!("HEY!");
     let opt = Option::<map::Map<String, Value>>::deserialize(de)?;
 
     match opt {
         None => Ok(None),
         Some(m) => {
-            println!("{:?}, {}", m, m.is_empty());
             if m.is_empty() {
-                println!("HEY!");
-
                 Ok(None)
             } else {
                 let res: T = serde_json::from_value(Value::Object(m)).map_err(D::Error::custom)?;
-                println!("{:?}", res);
                 Ok(Some(res))
             }
         }

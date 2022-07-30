@@ -1,8 +1,22 @@
+use std::io;
+
 use bytes::BytesMut;
+use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::task;
 
 pub mod components;
+
+#[derive(Error, Debug)]
+pub enum GSIServerError {
+    #[error("incomplete headers have been parsed from GSI request")]
+    IncompleteHeaders,
+    #[error("failed to read (write) from (to) socket listening to GSI")]
+    SocketError(#[from] io::Error),
+    #[error("failed to complete the assigned GSI task")]
+    TaskError(#[from] task::JoinError),
+}
 
 const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
@@ -25,10 +39,7 @@ impl GSIServer {
         }
     }
 
-    pub async fn run(
-        self,
-        handler: fn(components::GameState),
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(self, handler: fn(components::GameState)) -> Result<(), GSIServerError> {
         log::info!("Listening on {}", self.uri);
 
         let listener = TcpListener::bind(self.uri).await?;
@@ -37,12 +48,12 @@ impl GSIServer {
             let (mut socket, addr) = listener.accept().await?;
             log::info!("Accepted: {}", addr);
 
-            tokio::spawn(async move {
+            let _ = tokio::spawn(async move {
                 log::debug!("Task spawned");
 
                 if let Err(e) = socket.readable().await {
-                    log::error!("Unreadable socket; err = {:?}", e);
-                    return;
+                    log::error!("socket is not readable");
+                    return Err(GSIServerError::from(e));
                 };
 
                 let mut buf = BytesMut::with_capacity(122880);
@@ -50,23 +61,28 @@ impl GSIServer {
                 let n = match socket.read_buf(&mut buf).await {
                     Ok(n) if n == 0 => {
                         log::debug!("Socket closed");
-                        return;
+                        return Ok(());
                     }
                     Ok(n) => n,
                     Err(e) => {
-                        log::error!("failed to read from socket; err = {:?}", e);
-                        return;
+                        log::error!("failed to read from socket");
+                        return Err(GSIServerError::from(e));
                     }
                 };
                 log::debug!("Read: {}", n);
 
                 if let Err(e) = socket.write_all(OK.as_bytes()).await {
-                    log::error!("failed to write to socket; err = {:?}", e);
-                    return;
+                    log::error!("failed to write to socket");
+                    return Err(GSIServerError::from(e));
                 };
 
                 log::debug!("Raw request: {:?}", buf);
-                let amt = parse_headers(&buf);
+                let amt = match parse_headers(&buf) {
+                    Some(amt) => amt,
+                    None => {
+                        return Err(GSIServerError::IncompleteHeaders);
+                    }
+                };
 
                 let _ = buf.split_to(amt);
                 log::debug!("Raw data: {:?}", buf);
@@ -76,22 +92,22 @@ impl GSIServer {
 
                 log::debug!("Parsed: {:?}", gs);
                 handler(gs);
+
+                Ok(())
             })
             .await?;
         }
     }
 }
 
-pub fn parse_headers(buf: &[u8]) -> usize {
+pub fn parse_headers(buf: &[u8]) -> Option<usize> {
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut r = httparse::Request::new(&mut headers);
 
     let status = r.parse(buf).expect("Failed to parse HTTP request");
 
-    let amt = match status {
-        httparse::Status::Complete(amt) => amt,
-        httparse::Status::Partial => panic!("I'll figure it out later"),
-    };
-
-    amt
+    match status {
+        httparse::Status::Complete(amt) => Some(amt),
+        httparse::Status::Partial => None,
+    }
 }
