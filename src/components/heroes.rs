@@ -9,8 +9,8 @@ use super::{PlayerID, Team};
 pub struct Hero {
     pub xpos: Option<i32>,
     pub ypos: Option<i32>,
-    pub id: u16,
-    pub name: String,
+    pub id: i16,
+    pub name: Option<String>,
     pub level: Option<u8>,
     pub xp: Option<u32>,
     pub alive: Option<bool>,
@@ -46,7 +46,14 @@ pub struct Hero {
 
 impl fmt::Display for Hero {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Hero {}", self.name)
+        match &self.name {
+            None => {
+                write!(f, "No Hero")
+            }
+            Some(name) => {
+                write!(f, "Hero {}", name)
+            }
+        }
     }
 }
 
@@ -60,6 +67,18 @@ pub enum GameHeroes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_hero_selection() {
+        let json_str = r#"{
+        "id": -1
+      }"#;
+
+        let hero: Hero = serde_json::from_str(json_str).expect("Failed to deserialize Hero");
+
+        assert_eq!(hero.id, -1);
+        assert_eq!(hero.name, None);
+    }
 
     #[test]
     fn test_hero_deserialize() {
@@ -104,7 +123,7 @@ mod tests {
 
         let hero: Hero = serde_json::from_str(json_str).expect("Failed to deserialize Hero");
 
-        assert_eq!(hero.name, "npc_dota_hero_marci");
+        assert_eq!(hero.name, Some(String::from("npc_dota_hero_marci")));
         assert_eq!(hero.max_health, Some(1100));
     }
 }
