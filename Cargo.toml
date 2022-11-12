@@ -8,15 +8,23 @@ name = "dota"
 path = "src/lib.rs"
 
 [[bin]]
-name = "example"
-path = "src/bin.rs"
+name = "echoslam"
+path = "src/bin/echoslam.rs"
+
+[[bin]]
+name = "recall"
+path = "src/bin/recall.rs"
+
 
 [dependencies]
+async-trait = "^0.1.58"
 bytes = "1"
+chrono = "^0.4"
+clap = { version = "^4.0.23", features = ["derive"] }
 env_logger = "^0.9"
-httparse = "^1.7"
+httparse = "^1.8"
 log = "^0.4"
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = "^1.0"
-thiserror = "^1.0"
-tokio = { version = "1", features = ["net", "rt", "macros", "rt-multi-thread", "io-util"] }
+thiserror = "^1.0.37"
+tokio = { version = "1", features = ["net", "rt", "macros", "rt-multi-thread", "io-util", "fs", "sync"] }
