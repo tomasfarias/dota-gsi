@@ -12,7 +12,6 @@
 //!
 //! Here's A sample configuration file:
 //!
-//! ```
 //! "dota2-gsi Configuration"
 //!{
 //!    "uri"               "http://127.0.0.1:3000/"
@@ -37,7 +36,6 @@
 //!        "token"         "hello1234"
 //!    }
 //!}
-//!```
 //!
 //! Notice that the URI used in the configuration file must be the same URI used when creating a new [`GSIServer`].
 //!
