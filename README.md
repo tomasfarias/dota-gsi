@@ -1,7 +1,6 @@
 # dota-gsi
 
-Game State Integration with Dota 2 in rust.
-Provides a server that listens for JSON events sent by Dota 2. Enabling Game State
+Game State Integration with Dota 2 in rust. Provides a server that listens for JSON events sent by Dota 2.
 
 # Requirements
 
