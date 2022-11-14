@@ -1,7 +1,15 @@
 [package]
 name = "dota-gsi"
 version = "0.1.0"
+authors = ["Tomas Farias <tomas@tomasfarias.dev>"]
 edition = "2021"
+description = "Game State Integration with Dota 2 in rust. Provides a server that listens for JSON events sent by Dota 2."
+readme = "README.md"
+repository = "https://github.com/tomasfarias/c2g"
+license = "MIT"
+license-file = "LICENSE"
+keywords = ["dota"]
+
 
 [lib]
 name = "dota"
