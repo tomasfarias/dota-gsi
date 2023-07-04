@@ -54,6 +54,11 @@ use tokio::task;
 
 pub mod components;
 
+// The payload sent by Dota is usually between 50-60kb.
+// We use two buffers initialized to a value that should be enough to contain most payloads.
+const READ_BUFFER_CAPACITY: usize = 71680;
+const REQUEST_BUFFER_CAPACITY: usize = 71680;
+
 #[derive(Error, Debug)]
 pub enum GSIServerError {
     #[error("incomplete headers have been parsed from GSI request")]
@@ -69,7 +74,7 @@ pub enum GSIServerError {
 }
 
 /// The response expected by every GameState Integration request.
-/// Failued to deliver this response would cause the request to be retried infinitely.
+/// Failure to deliver this response would cause the request to be retried infinitely.
 const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
 /// Trait implemented by handlers of Game State data.
@@ -131,6 +136,7 @@ impl GSIServer {
                     }
                     Ok(buf) => match serde_json::from_slice(&buf) {
                         Err(e) => {
+                            log::debug!("{:?}", buf);
                             log::error!("Failed to parse JSON body: {}", e);
                             return Err(GSIServerError::from(e));
                         }
@@ -196,23 +202,30 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         return Err(GSIServerError::from(e));
     };
 
-    let mut buf = BytesMut::with_capacity(122880);
+    let mut buf = BytesMut::with_capacity(REQUEST_BUFFER_CAPACITY);
 
-    let n = match socket.read_buf(&mut buf).await {
-        Ok(n) if n == 0 => {
-            log::debug!("Socket closed");
-            return Err(GSIServerError::SocketClosed);
+    loop {
+        let mut read_buf = [0u8; READ_BUFFER_CAPACITY];
+
+        let n = match socket.read(&mut read_buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("failed to read from socket: {}", e);
+                return Err(GSIServerError::from(e));
+            }
+        };
+        log::debug!("Read: {}", n);
+
+        buf.extend_from_slice(&read_buf[..n]);
+
+        if n == 0 || n < READ_BUFFER_CAPACITY {
+            // End of stream
+            break;
         }
-        Ok(n) => n,
-        Err(e) => {
-            log::error!("failed to read from socket");
-            return Err(GSIServerError::from(e));
-        }
-    };
-    log::debug!("Read: {}", n);
+    }
 
     if let Err(e) = socket.write_all(OK.as_bytes()).await {
-        log::error!("failed to write to socket");
+        log::error!("failed to write to socket: {}", e);
         return Err(GSIServerError::from(e));
     };
 
