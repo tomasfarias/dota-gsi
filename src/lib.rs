@@ -126,7 +126,7 @@ impl GSIServer {
             let (socket, addr) = listener.accept().await?;
             log::info!("Accepted: {}", addr);
 
-            let _ = tokio::spawn(async move {
+            tokio::spawn(async move {
                 log::debug!("Task spawned");
 
                 match process(socket).await {
@@ -169,7 +169,7 @@ impl GSIServer {
             // Need to clone as handler will be moved by spawn.
             let this_handler = handler.clone();
 
-            let _ = tokio::spawn(async move {
+            tokio::spawn(async move {
                 log::debug!("Task spawned");
 
                 match process(socket).await {
