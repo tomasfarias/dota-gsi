@@ -57,7 +57,7 @@ pub mod components;
 /// The payload sent by Dota is usually between 50-60kb.
 /// We initialize a buffer to read the request with this initial capacity.
 /// The code then looks at the Content-Length header to reserve the required capacity.
-const INITIAL_REQUEST_BUFFER_CAPACITY: usize = 1024;
+const INITIAL_REQUEST_BUFFER_CAPACITY_BYTES: usize = 1024;
 
 /// The POST request sent by Dota includes a number of headers.
 /// We parse them to find the Content-Length.
@@ -210,7 +210,7 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         return Err(GSIServerError::from(e));
     };
 
-    let mut buf = BytesMut::with_capacity(INITIAL_REQUEST_BUFFER_CAPACITY);
+    let mut buf = BytesMut::with_capacity(INITIAL_REQUEST_BUFFER_CAPACITY_BYTES);
     let request_length: usize;
     let content_length: usize;
 
@@ -218,7 +218,7 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         match socket.read_buf(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
-                log::error!("failed to read from socket: {}", e);
+                log::error!("failed to read request from socket: {}", e);
                 return Err(GSIServerError::from(e));
             }
         };
@@ -241,12 +241,12 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         break;
     }
 
-    if buf.len() <= request_length + content_length {
+    if buf.len() < request_length + content_length {
         buf.reserve(request_length + content_length);
         match socket.read_buf(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
-                log::error!("failed to read from socket: {}", e);
+                log::error!("failed to read body from socket: {}", e);
                 return Err(GSIServerError::from(e));
             }
         };
