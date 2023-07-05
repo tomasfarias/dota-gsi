@@ -54,10 +54,18 @@ use tokio::task;
 
 pub mod components;
 
-// The payload sent by Dota is usually between 50-60kb.
-// We use two buffers initialized to a value that should be enough to contain most payloads.
-const READ_BUFFER_CAPACITY: usize = 71680;
-const REQUEST_BUFFER_CAPACITY: usize = 71680;
+/// The payload sent by Dota is usually between 50-60kb.
+/// We initialize a buffer to read the request with this initial capacity.
+/// The code then looks at the Content-Length header to reserve the required capacity.
+const INITIAL_REQUEST_BUFFER_CAPACITY: usize = 1024;
+
+/// The POST request sent by Dota includes a number of headers.
+/// We parse them to find the Content-Length.
+const EXPECTED_NUMBER_OF_HEADERS: usize = 7;
+
+/// The response expected by every GameState Integration request.
+/// Failure to deliver this response would cause the request to be retried infinitely.
+const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
 #[derive(Error, Debug)]
 pub enum GSIServerError {
@@ -70,12 +78,12 @@ pub enum GSIServerError {
     #[error("failed to complete the assigned GSI task")]
     TaskError(#[from] task::JoinError),
     #[error("failed to parse game state integration from JSON")]
-    ParseError(#[from] serde_json::Error),
+    ParseJSONError(#[from] serde_json::Error),
+    #[error("failed to parse Content-Length Header sent by Dota")]
+    ParseContentLengthError(String),
+    #[error("failed to parse Request sent by Dota")]
+    ParseRequestError(#[from] httparse::Error),
 }
-
-/// The response expected by every GameState Integration request.
-/// Failure to deliver this response would cause the request to be retried infinitely.
-const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
 /// Trait implemented by handlers of Game State data.
 #[async_trait]
@@ -202,26 +210,46 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         return Err(GSIServerError::from(e));
     };
 
-    let mut buf = BytesMut::with_capacity(REQUEST_BUFFER_CAPACITY);
+    let mut buf = BytesMut::with_capacity(INITIAL_REQUEST_BUFFER_CAPACITY);
+    let request_length: usize;
+    let content_length: usize;
 
     loop {
-        let mut read_buf = [0u8; READ_BUFFER_CAPACITY];
-
-        let n = match socket.read(&mut read_buf).await {
+        match socket.read_buf(&mut buf).await {
             Ok(n) => n,
             Err(e) => {
                 log::error!("failed to read from socket: {}", e);
                 return Err(GSIServerError::from(e));
             }
         };
-        log::debug!("Read: {}", n);
 
-        buf.extend_from_slice(&read_buf[..n]);
+        let mut headers = [httparse::EMPTY_HEADER; EXPECTED_NUMBER_OF_HEADERS];
+        let mut r = httparse::Request::new(&mut headers);
 
-        if n == 0 || n < READ_BUFFER_CAPACITY {
-            // End of stream
-            break;
-        }
+        request_length = match r.parse(&mut buf) {
+            Ok(httparse::Status::Complete(size)) => size,
+            Ok(httparse::Status::Partial) => {
+                log::debug!("partial request parsed, need to read more");
+                continue;
+            }
+            Err(e) => {
+                log::error!("failed to parse request: {}", e);
+                return Err(GSIServerError::from(e));
+            }
+        };
+        content_length = get_content_length_from_headers(&headers)?;
+        break;
+    }
+
+    if buf.len() <= request_length + content_length {
+        buf.reserve(request_length + content_length);
+        match socket.read_buf(&mut buf).await {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("failed to read from socket: {}", e);
+                return Err(GSIServerError::from(e));
+            }
+        };
     }
 
     if let Err(e) = socket.write_all(OK.as_bytes()).await {
@@ -229,31 +257,119 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         return Err(GSIServerError::from(e));
     };
 
-    log::debug!("Raw request: {:?}", buf);
-    let amt = match parse_headers(&buf) {
-        Some(amt) => amt,
-        None => {
-            return Err(GSIServerError::IncompleteHeaders);
-        }
-    };
-
-    let _ = buf.split_to(amt);
-    log::debug!("Raw data: {:?}", buf);
-
-    Ok(buf)
+    Ok(buf.split_off(request_length))
 }
 
-/// Parse the HTTP request headers.
-/// For the time being, we don't care about the headers themselves.
-/// We parse them only to ensure they are valid and to get to the beginning of the body.
-pub fn parse_headers(buf: &[u8]) -> Option<usize> {
-    let mut headers = [httparse::EMPTY_HEADER; 16];
-    let mut r = httparse::Request::new(&mut headers);
+/// Extract Content-Length value from a list of HTTP headers.
+pub fn get_content_length_from_headers(
+    headers: &[httparse::Header],
+) -> Result<usize, GSIServerError> {
+    match headers
+        .iter()
+        .filter(|h| h.name == "Content-Length")
+        .map(|h| h.value)
+        .nth(0)
+    {
+        Some(value) => {
+            let str_length = match std::str::from_utf8(value) {
+                Ok(s) => s,
+                Err(e) => {
+                    return Err(GSIServerError::ParseContentLengthError(format!(
+                        "failed to parse bytes as str: {}",
+                        e
+                    )))
+                }
+            };
+            match usize::from_str_radix(str_length, 10) {
+                Ok(n) => Ok(n),
+                Err(e) => {
+                    return Err(GSIServerError::ParseContentLengthError(format!(
+                        "failed to parse str into usize: {}",
+                        e
+                    )))
+                }
+            }
+        }
+        None => Err(GSIServerError::ParseContentLengthError(
+            "Content-Length header not found".to_string(),
+        )),
+    }
+}
 
-    let status = r.parse(buf).expect("Failed to parse HTTP request");
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    match status {
-        httparse::Status::Complete(amt) => Some(amt),
-        httparse::Status::Partial => None,
+    const TEST_URI: &'static str = "127.0.0.1:0";
+
+    #[test]
+    fn test_get_content_length_from_headers() {
+        let mut headers = [httparse::EMPTY_HEADER; EXPECTED_NUMBER_OF_HEADERS];
+        let mut r = httparse::Request::new(&mut headers);
+        let request_bytes = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:3000\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\nContent-Length: 54943\r\n\r\n";
+        r.parse(request_bytes)
+            .expect("parsing the request should never fail");
+
+        let expected = 54943 as usize;
+        let content_length =
+            get_content_length_from_headers(&r.headers).expect("failed to get Content-Length");
+
+        assert_eq!(content_length, expected);
+    }
+
+    #[test]
+    fn test_get_content_length_from_headers_not_found() {
+        let mut headers = [httparse::EMPTY_HEADER; EXPECTED_NUMBER_OF_HEADERS];
+        let mut r = httparse::Request::new(&mut headers);
+        let request_bytes = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:3000\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\n\r\n";
+        r.parse(request_bytes)
+            .expect("parsing the request should never fail");
+
+        let content_length = get_content_length_from_headers(&r.headers);
+
+        assert!(matches!(
+            content_length,
+            Err(GSIServerError::ParseContentLengthError(_))
+        ));
+    }
+
+    #[test]
+    fn test_get_content_length_from_headers_not_a_number() {
+        let mut headers = [httparse::EMPTY_HEADER; EXPECTED_NUMBER_OF_HEADERS];
+        let mut r = httparse::Request::new(&mut headers);
+        let request_bytes = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:3000\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\nContent-Length: asdasd\r\n\r\n";
+        r.parse(request_bytes)
+            .expect("parsing the request should never fail");
+
+        let content_length = get_content_length_from_headers(&r.headers);
+
+        assert!(matches!(
+            content_length,
+            Err(GSIServerError::ParseContentLengthError(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_process() {
+        let listener = TcpListener::bind(TEST_URI)
+            .await
+            .expect("failed to bind to address");
+        let local_addr = listener.local_addr().unwrap();
+        let sample_request = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:3000\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\nContent-Length: 173\r\n\r\n{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}";
+        let expected = b"{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}";
+
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = stream.write_all(sample_request).await;
+            }
+        });
+
+        let stream = TcpStream::connect(local_addr)
+            .await
+            .expect("failed to connect to address");
+
+        let result = process(stream).await.expect("processing failed");
+        assert_eq!(result.len(), expected.len());
+        assert_eq!(result.as_ref(), expected);
     }
 }
