@@ -226,7 +226,7 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         let mut headers = [httparse::EMPTY_HEADER; EXPECTED_NUMBER_OF_HEADERS];
         let mut r = httparse::Request::new(&mut headers);
 
-        request_length = match r.parse(&mut buf) {
+        request_length = match r.parse(&buf) {
             Ok(httparse::Status::Complete(size)) => size,
             Ok(httparse::Status::Partial) => {
                 log::debug!("partial request parsed, need to read more");
@@ -268,7 +268,7 @@ pub fn get_content_length_from_headers(
         .iter()
         .filter(|h| h.name == "Content-Length")
         .map(|h| h.value)
-        .nth(0)
+        .next()
     {
         Some(value) => {
             let str_length = match std::str::from_utf8(value) {
@@ -280,14 +280,12 @@ pub fn get_content_length_from_headers(
                     )))
                 }
             };
-            match usize::from_str_radix(str_length, 10) {
+            match str_length.parse::<usize>() {
                 Ok(n) => Ok(n),
-                Err(e) => {
-                    return Err(GSIServerError::ParseContentLengthError(format!(
-                        "failed to parse str into usize: {}",
-                        e
-                    )))
-                }
+                Err(e) => Err(GSIServerError::ParseContentLengthError(format!(
+                    "failed to parse str into usize: {}",
+                    e
+                ))),
             }
         }
         None => Err(GSIServerError::ParseContentLengthError(
