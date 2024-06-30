@@ -241,7 +241,7 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         break;
     }
 
-    if buf.len() < request_length + content_length {
+    if buf.len() <= request_length + content_length {
         buf.reserve(request_length + content_length);
         match socket.read_buf(&mut buf).await {
             Ok(n) => n,
@@ -359,6 +359,7 @@ mod tests {
         tokio::spawn(async move {
             if let Ok((mut stream, _)) = listener.accept().await {
                 let _ = stream.write_all(sample_request).await;
+                let _ = stream.shutdown().await;
             }
         });
 
