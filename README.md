@@ -18,7 +18,7 @@ Here's a sample configuration file:
 ```cfg
 "dota2-gsi Configuration"
 {
-   "uri"               "http://127.0.0.1:3000/"
+   "uri"               "http://127.0.0.1:53000/"
    "timeout"           "5.0"
    "buffer"            "0.1"
    "throttle"          "0.1"
@@ -37,7 +37,7 @@ Here's a sample configuration file:
    }
    "auth"
    {
-       "token"         "hello1234"
+       "token"         "abcdefghijklmopqrstuvxyz123456789"
    }
 }
 ```
