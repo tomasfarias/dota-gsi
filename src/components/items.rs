@@ -23,28 +23,30 @@ pub enum ItemsError {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(from = "String")]
 pub enum Rune {
-    Empty,
     Arcane,
     Bounty,
     DoubleDamage,
+    Empty,
     Haste,
     Illusion,
     Invisibility,
     Regeneration,
+    Shield,
     Undefined(String),
 }
 
 impl From<String> for Rune {
     fn from(s: String) -> Self {
         return match s.as_str() {
-            "empty" => Rune::Empty,
             "arcane" => Rune::Arcane,
             "bounty" => Rune::Bounty,
             "double_damage" => Rune::DoubleDamage,
+            "empty" => Rune::Empty,
             "haste" => Rune::Haste,
             "illusion" => Rune::Illusion,
             "invisibility" => Rune::Invisibility,
             "regen" => Rune::Regeneration,
+            "shield" => Rune::Shield,
             _ => Rune::Undefined(s),
         };
     }
@@ -54,13 +56,14 @@ impl fmt::Display for Rune {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Rune::Arcane => write!(f, "Arcane"),
-            Rune::Empty => write!(f, "Empty"),
             Rune::Bounty => write!(f, "Bounty"),
             Rune::DoubleDamage => write!(f, "Double damage"),
+            Rune::Empty => write!(f, "Empty"),
             Rune::Haste => write!(f, "Haste"),
             Rune::Illusion => write!(f, "Illusion"),
             Rune::Invisibility => write!(f, "Invisibility"),
             Rune::Regeneration => write!(f, "Regeneration"),
+            Rune::Shield => write!(f, "Shield"),
             Rune::Undefined(s) => write!(f, "Rune {}", s),
         }
     }
@@ -90,7 +93,7 @@ impl fmt::Display for ItemContainer {
             ItemContainer::Inventory(n) => write!(f, "Inventory: {}", n),
             ItemContainer::Stash(n) => write!(f, "Stash: {}", n),
             ItemContainer::Teleport => write!(f, "Teleport"),
-            ItemContainer::Neutral => write!(f, "Nuetral"),
+            ItemContainer::Neutral => write!(f, "Neutral"),
         }
     }
 }
