@@ -55,7 +55,7 @@ impl<'de> Deserialize<'de> for AbilityID {
             return Ok(AbilityID(index.expect("failed to parse ID")));
         }
 
-        Err(AbilitiesError::ParseIDError(s)).map_err(D::Error::custom)
+        Err(D::Error::custom(AbilitiesError::ParseIDError(s)))
     }
 }
 

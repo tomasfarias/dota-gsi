@@ -106,9 +106,7 @@ impl<'de> Deserialize<'de> for Wearables {
             let slot: WearableSlot = WearableSlot::deserialize(key.clone().into_deserializer())?;
             let id: u32 = match value.as_u64() {
                 Some(n) => n as u32,
-                None => {
-                    return Err(WearablesError::ParseWearableError(value)).map_err(D::Error::custom)
-                }
+                None => return Err(D::Error::custom(WearablesError::ParseWearableError(value))),
             };
 
             match hm.get_mut(&slot) {
@@ -151,7 +149,7 @@ where
         }
     }
 
-    Err(WearablesError::ParseSlotError(s)).map_err(D::Error::custom)
+    Err(D::Error::custom(WearablesError::ParseSlotError(s)))
 }
 
 #[derive(Deserialize, Debug, Serialize)]

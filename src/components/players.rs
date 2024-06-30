@@ -64,7 +64,7 @@ impl<'de> Deserialize<'de> for PlayerID {
             return Ok(PlayerID(index));
         }
 
-        Err(PlayersError::ParseIDError(s)).map_err(D::Error::custom)
+        Err(D::Error::custom(PlayersError::ParseIDError(s)))
     }
 }
 
