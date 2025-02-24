@@ -277,7 +277,7 @@ pub fn get_content_length_from_headers(
                     return Err(GSIServerError::ParseContentLengthError(format!(
                         "failed to parse bytes as str: {}",
                         e
-                    )))
+                    )));
                 }
             };
             match str_length.parse::<usize>() {

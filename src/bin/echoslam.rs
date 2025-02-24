@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use dota::{components::GameState, GSIServer};
+use dota::{GSIServer, components::GameState};
 
 /// Echo back Dota GameState integration state.
 async fn echo_gamestate_handler(gs: GameState) {

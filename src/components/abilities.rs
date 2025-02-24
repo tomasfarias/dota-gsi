@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{de, de::Error, ser, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de, de::Error, ser};
 use thiserror;
 
 use super::{PlayerID, Team};
@@ -142,11 +142,15 @@ mod tests {
         assert_eq!(abilities.len(), 6);
         assert!(abilities.iter().all(|a| a.ability_active));
         assert!(abilities.iter().all(|a| a.can_cast));
-        assert!(abilities
-            .iter()
-            .any(|a| a.name == "plus_guild_banner".to_owned()));
-        assert!(abilities
-            .iter()
-            .any(|a| a.name == "marci_unleash".to_owned()));
+        assert!(
+            abilities
+                .iter()
+                .any(|a| a.name == "plus_guild_banner".to_owned())
+        );
+        assert!(
+            abilities
+                .iter()
+                .any(|a| a.name == "marci_unleash".to_owned())
+        );
     }
 }
