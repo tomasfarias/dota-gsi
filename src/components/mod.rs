@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{Deserialize, Serialize, de, de::Error};
-use serde_json::{Value, map};
+use serde::{de, de::Error, Deserialize, Serialize};
+use serde_json::{map, Value};
 
 pub mod abilities;
 pub mod buildings;
@@ -46,7 +46,7 @@ pub enum DotaGameRulesState {
 
 impl From<String> for DotaGameRulesState {
     fn from(s: String) -> Self {
-        return match s.as_str() {
+        match s.as_str() {
             "DOTA_GAMERULES_STATE_DISCONNECT" => DotaGameRulesState::Disconnected,
             "DOTA_GAMERULES_STATE_GAME_IN_PROGRESS" => DotaGameRulesState::InProgress,
             "DOTA_GAMERULES_STATE_HERO_SELECTION" => DotaGameRulesState::HeroSelection,
@@ -61,7 +61,7 @@ impl From<String> for DotaGameRulesState {
             }
             "DOTA_GAMERULES_STATE_CUSTOM_GAME_SETUP" => DotaGameRulesState::CustomGameSetup,
             _ => DotaGameRulesState::Undefined(s),
-        };
+        }
     }
 }
 

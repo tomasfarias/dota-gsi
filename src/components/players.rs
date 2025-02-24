@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{Deserialize, Serialize, de, de::Error, ser};
+use serde::{de, de::Error, ser, Deserialize, Serialize};
 use thiserror;
 
 use super::Team;
@@ -24,11 +24,11 @@ pub enum PlayerActivity {
 
 impl From<String> for PlayerActivity {
     fn from(s: String) -> Self {
-        return match s.as_str() {
+        match s.as_str() {
             "menu" => PlayerActivity::Menu,
             "playing" => PlayerActivity::Playing,
             _ => PlayerActivity::Undefined(s),
-        };
+        }
     }
 }
 

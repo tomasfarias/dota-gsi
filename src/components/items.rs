@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::num::ParseIntError;
 
-use serde::{Deserialize, Serialize, de};
+use serde::{de, Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{PlayerID, Team};
@@ -37,7 +37,7 @@ pub enum Rune {
 
 impl From<String> for Rune {
     fn from(s: String) -> Self {
-        return match s.as_str() {
+        match s.as_str() {
             "arcane" => Rune::Arcane,
             "bounty" => Rune::Bounty,
             "double_damage" => Rune::DoubleDamage,
@@ -48,7 +48,7 @@ impl From<String> for Rune {
             "regen" => Rune::Regeneration,
             "shield" => Rune::Shield,
             _ => Rune::Undefined(s),
-        };
+        }
     }
 }
 

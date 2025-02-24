@@ -13,12 +13,12 @@ pub enum Team {
 
 impl From<String> for Team {
     fn from(s: String) -> Self {
-        return match s.as_str() {
+        match s.as_str() {
             "radiant" | "team2" => Team::Radiant,
             "dire" | "team3" => Team::Dire,
             "none" => Team::None,
             _ => Team::Undefined(s),
-        };
+        }
     }
 }
 
