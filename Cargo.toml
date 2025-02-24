@@ -1,8 +1,8 @@
 [package]
 name = "dota-gsi"
-version = "0.1.4"
+version = "0.2.0"
 authors = ["Tomas Farias <tomas@tomasfarias.dev>"]
-edition = "2021"
+edition = "2024"
 description = "Game State Integration with Dota 2 in rust. Provides a server that listens for JSON events sent by Dota 2."
 readme = "README.md"
 repository = "https://github.com/tomasfarias/dota-gsi"
@@ -27,7 +27,7 @@ path = "src/bin/recall.rs"
 async-trait = "^0.1.70"
 bytes = "1"
 chrono = "^0.4"
-clap = { version = "^4.3", features = ["derive"] }
+clap = { version = "^4.5", features = ["derive"] }
 env_logger = "^0.10"
 httparse = "^1.8"
 log = "^0.4"
