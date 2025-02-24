@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::num::ParseIntError;
 
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use thiserror::Error;
 
 use super::{PlayerID, Team};

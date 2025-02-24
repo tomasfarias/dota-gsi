@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{de, de::Error, ser, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de, de::Error, ser};
 use thiserror;
 
 use super::Team;
