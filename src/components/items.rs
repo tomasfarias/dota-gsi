@@ -76,13 +76,14 @@ pub enum ItemContainer {
     Stash(u8),
     Teleport,
     Neutral,
+    PreservedNeutral,
 }
 
 impl ItemContainer {
     fn index(&self) -> u8 {
         match self {
             ItemContainer::Inventory(n) | ItemContainer::Stash(n) => *n,
-            ItemContainer::Teleport | ItemContainer::Neutral => 0,
+            ItemContainer::Teleport | ItemContainer::Neutral | ItemContainer::PreservedNeutral => 0,
         }
     }
 }
@@ -94,6 +95,7 @@ impl fmt::Display for ItemContainer {
             ItemContainer::Stash(n) => write!(f, "Stash: {}", n),
             ItemContainer::Teleport => write!(f, "Teleport"),
             ItemContainer::Neutral => write!(f, "Neutral"),
+            ItemContainer::PreservedNeutral => write!(f, "Preserved neutral"),
         }
     }
 }
@@ -117,6 +119,7 @@ impl TryFrom<String> for ItemContainer {
             "stash" => Ok(ItemContainer::Stash(numeric_slot)),
             "teleport" => Ok(ItemContainer::Teleport),
             "neutral" => Ok(ItemContainer::Neutral),
+            "preserved_neutral" => Ok(ItemContainer::PreservedNeutral),
             s => Err(ItemsError::UnknownItemContainer(s.to_owned())),
         }
     }
@@ -136,11 +139,13 @@ fn find_first_numeric(s: &str) -> Option<usize> {
 pub struct Item {
     name: String,
     purchaser: i16,
+    item_level: Option<u16>,
     contains_rune: Option<Rune>,
     can_cast: Option<bool>,
     cooldown: Option<u16>,
     passive: bool,
     charges: Option<u16>,
+    item_charges: Option<u16>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -170,7 +175,8 @@ pub struct Items {
     inventory: Vec<ItemSlot>,
     stash: Vec<ItemSlot>,
     teleport: ItemSlot,
-    neutral: ItemSlot,
+    neutrals: Vec<ItemSlot>,
+    preserved_neutrals: Vec<ItemSlot>,
 }
 
 impl Items {
@@ -195,11 +201,18 @@ impl Items {
         }
     }
 
-    pub fn is_neutral_empty(&self) -> bool {
-        match self.neutral {
+    pub fn is_neutrals_empty(&self) -> bool {
+        self.neutrals.iter().all(|item| match item {
             ItemSlot::Empty { index: _ } => true,
             ItemSlot::Full { index: _, item: _ } => false,
-        }
+        })
+    }
+
+    pub fn is_preserved_neutrals_empty(&self) -> bool {
+        self.preserved_neutrals.iter().all(|item| match item {
+            ItemSlot::Empty { index: _ } => true,
+            ItemSlot::Full { index: _, item: _ } => false,
+        })
     }
 }
 
@@ -239,10 +252,28 @@ impl fmt::Display for Items {
             writeln!(f, "Teleport: {}", self.teleport)?;
         }
 
-        if self.is_neutral_empty() {
+        if self.is_neutrals_empty() {
             writeln!(f, "Neutral: Empty")?;
         } else {
-            writeln!(f, "Neutral: {}", self.neutral)?;
+            for (index, slot) in self.neutrals.iter().enumerate() {
+                writeln!(f, "{{ {} }}", slot)?;
+
+                if (index + 1) != self.inventory.len() {
+                    write!(f, "{:11}", "")?;
+                }
+            }
+        }
+
+        if self.is_preserved_neutrals_empty() {
+            writeln!(f, "Preserved neutral: Empty")?;
+        } else {
+            for (index, slot) in self.preserved_neutrals.iter().enumerate() {
+                writeln!(f, "{{ {} }}", slot)?;
+
+                if (index + 1) != self.preserved_neutrals.len() {
+                    write!(f, "{:11}", "")?;
+                }
+            }
         }
 
         Ok(())
@@ -266,18 +297,21 @@ impl<'de> Deserialize<'de> for Items {
         struct NestedItem {
             name: String,
             purchaser: Option<i16>,
+            item_level: Option<u16>,
             contains_rune: Option<Rune>,
             can_cast: Option<bool>,
             cooldown: Option<u16>,
             passive: Option<bool>,
+            item_charges: Option<u16>,
             charges: Option<u16>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
         let mut inventory: Vec<ItemSlot> = Vec::new();
         let mut stash: Vec<ItemSlot> = Vec::new();
-        let mut neutral: ItemSlot = ItemSlot::Empty { index: 0 };
         let mut teleport: ItemSlot = ItemSlot::Empty { index: 0 };
+        let mut neutrals: Vec<ItemSlot> = Vec::new();
+        let mut preserved_neutrals: Vec<ItemSlot> = Vec::new();
 
         for (k, v) in helper.items.into_iter() {
             let container = ItemContainer::try_from(k).map_err(de::Error::custom)?;
@@ -297,6 +331,7 @@ impl<'de> Deserialize<'de> for Items {
                                 ItemsError::MissingRequiredField("purchaser".to_owned(), container)
                             })
                             .map_err(de::Error::custom)?,
+                        item_level: v.item_level,
                         contains_rune: v.contains_rune,
                         can_cast: v.can_cast,
                         cooldown: v.cooldown,
@@ -306,6 +341,7 @@ impl<'de> Deserialize<'de> for Items {
                                 ItemsError::MissingRequiredField("passive".to_owned(), container)
                             })
                             .map_err(de::Error::custom)?,
+                        item_charges: v.item_charges,
                         charges: v.charges,
                     },
                 }
@@ -317,9 +353,8 @@ impl<'de> Deserialize<'de> for Items {
                 ItemContainer::Teleport => {
                     teleport = item;
                 }
-                ItemContainer::Neutral => {
-                    neutral = item;
-                }
+                ItemContainer::Neutral => neutrals.push(item),
+                ItemContainer::PreservedNeutral => preserved_neutrals.push(item),
             }
         }
 
@@ -327,7 +362,8 @@ impl<'de> Deserialize<'de> for Items {
             inventory,
             stash,
             teleport,
-            neutral,
+            neutrals,
+            preserved_neutrals,
         })
     }
 }
@@ -387,13 +423,33 @@ mod tests {
           "teleport0": {
               "name": "item_tpscroll",
               "purchaser": 0,
+              "item_level": 1,
               "can_cast": false,
               "cooldown": 96,
               "passive": false,
+              "item_charges": 1,
               "charges": 1
           },
           "neutral0": {
-              "name": "empty"
+            "name": "empty"
+          },
+          "neutral1": {
+            "name": "empty"
+          },
+          "preserved_neutral6": {
+            "name": "empty"
+          },
+          "preserved_neutral7": {
+            "name": "empty"
+          },
+          "preserved_neutral8": {
+            "name": "empty"
+          },
+          "preserved_neutral9": {
+            "name": "empty"
+          },
+          "preserved_neutral10": {
+            "name": "empty"
           }
         }"#;
 
@@ -406,6 +462,7 @@ mod tests {
 
         assert!(items.is_inventory_empty());
         assert!(items.is_stash_empty());
-        assert!(items.is_neutral_empty());
+        assert!(items.is_neutrals_empty());
+        assert!(items.is_preserved_neutrals_empty());
     }
 }

@@ -79,7 +79,7 @@ pub enum GSIServerError {
     TaskError(#[from] task::JoinError),
     #[error("failed to parse game state integration from JSON")]
     ParseJSONError(#[from] serde_json::Error),
-    #[error("failed to parse Content-Length Header sent by Dota")]
+    #[error("failed to parse Content-Length Header sent by Dota: {0}")]
     ParseContentLengthError(String),
     #[error("failed to parse Request sent by Dota")]
     ParseRequestError(#[from] httparse::Error),
