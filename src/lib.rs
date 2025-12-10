@@ -237,6 +237,7 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
                 return Err(GSIServerError::from(e));
             }
         };
+        log::debug!("headers: {:?}", headers);
         content_length = get_content_length_from_headers(&headers)?;
         break;
     }
