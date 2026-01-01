@@ -89,7 +89,7 @@ pub enum GSIServerError {
 #[async_trait]
 pub trait GameStateHandler<D>
 where
-    D: DeserializeOwned + std::fmt::Debug + Send + 'static,
+    D: DeserializeOwned + std::fmt::Debug + Send,
 {
     async fn handle(self, gs: D);
 }
@@ -123,8 +123,8 @@ impl GSIServer {
         handler: impl Fn(D) -> U + Sync + Send + Copy + 'static,
     ) -> Result<(), GSIServerError>
     where
-        D: DeserializeOwned + std::fmt::Debug + Send + 'static,
-        U: Future + Send + Sync + 'static,
+        D: DeserializeOwned + std::fmt::Debug + Send,
+        U: Future + Send + Sync,
         U::Output: Send,
     {
         let listener = TcpListener::bind(self.uri).await?;
@@ -166,7 +166,7 @@ impl GSIServer {
         handler: impl GameStateHandler<D> + Send + Sync + Clone + 'static,
     ) -> Result<(), GSIServerError>
     where
-        D: DeserializeOwned + std::fmt::Debug + Send + 'static,
+        D: DeserializeOwned + std::fmt::Debug + Send,
     {
         let listener = TcpListener::bind(self.uri).await?;
         log::info!("Listening on: {:?}", listener.local_addr());
