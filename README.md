@@ -1,5 +1,8 @@
 # dota-gsi
 
+[![crates.io](https://img.shields.io/crates/v/dota-gsi.svg)]
+[![CI/CD](https://github.com/tomasfarias/dota-gsi/actions/workflows/cd.yaml/badge.svg)](https://github.com/tomasfarias/dota-gsi/actions)
+
 Game State Integration with Dota 2 in rust. Provides a server that listens for JSON events sent by Dota 2.
 
 # Requirements
