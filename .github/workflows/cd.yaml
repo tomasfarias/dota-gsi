@@ -33,7 +33,7 @@ jobs:
         with:
           egress-policy: block
           allowed-endpoints: >
-            api.github.com:443
+            github.com:443
             static.rust-lang.org:443
             index.crates.io:443
             static.crates.io:443
@@ -71,8 +71,8 @@ jobs:
           egress-policy: audit
           allowed-endpoints: >
             github.com:443
-            release-assets.githubusercontent.com:443
             api.github.com:443
+            release-assets.githubusercontent.com:443
             static.rust-lang.org:443
             index.crates.io:443
             static.crates.io:443
@@ -106,6 +106,7 @@ jobs:
         with:
           egress-policy: audit
           allowed-endpoints: >
+            github.com:443
             api.github.com:443
             static.rust-lang.org:443
             index.crates.io:443
