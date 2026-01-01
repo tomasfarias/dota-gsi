@@ -93,7 +93,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: ${{ fromJSON(env.IS_PRERELEASE) }}
-          token: ${{ secrets.GH_DEPLOY_TOKEN }}
 
   publish:
     runs-on: ubuntu-latest
