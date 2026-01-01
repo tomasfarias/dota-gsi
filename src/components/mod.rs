@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use serde::{Deserialize, Serialize, de, de::Error};
-use serde_json::{Value, map};
+use serde::{de, de::Error, Deserialize, Serialize};
+use serde_json::{map, Value};
 
 pub mod abilities;
 pub mod buildings;
@@ -113,7 +113,8 @@ pub struct Map {
     game_state: DotaGameRulesState,
     paused: bool,
     win_team: Team,
-    customgamename: String,
+    #[serde(alias = "customgamename")]
+    custom_game_name: String,
     ward_purchase_cooldown: Option<u16>,
 }
 
