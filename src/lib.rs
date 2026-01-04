@@ -1,7 +1,7 @@
 //! Game State Integration with Dota 2.
 //!
-//! Provides a server that listens for JSON events sent by Dota 2. Enabling Game State
-//! Integration requires:
+//! Provides a [`Server`] that listens for JSON events sent by Dota 2. Enabling game state
+//! integration requires:
 //! 1. Creating a `.cfg` [configuration file] in the Dota 2 game configuration directory.
 //! 2. Running Dota 2 with the -gamestateintegration [launch option].
 //!
@@ -37,33 +37,36 @@
 //!    }
 //!}
 //!
-//! Notice that the URI used in the configuration file must be the same URI used when creating a new [`GSIServer`].
+//! Notice that the URI used in the configuration file must be the same URI used when
+//! initializing a [`Server`].
 //!
-//! [configuration file]: https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration
-//! [launch option]: https://help.steampowered.com/en/faqs/view/7d01-d2dd-d75e-2955
+//! [^configuration file]: Details on configuration file: https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration
+//! [^launch option]: Available launch options: https://help.steampowered.com/en/faqs/view/7d01-d2dd-d75e-2955
 use std::future::Future;
 use std::io;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use bytes::BytesMut;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast;
 use tokio::task;
 
 pub mod components;
 
-/// The payload sent by Dota is usually between 50-60kb.
+/// The payload sent on every game state integration request is usually between 50-60kb.
 /// We initialize a buffer to read the request with this initial capacity.
 /// The code then looks at the Content-Length header to reserve the required capacity.
 const INITIAL_REQUEST_BUFFER_CAPACITY_BYTES: usize = 1024;
 
-/// The POST request sent by Dota includes a number of headers.
+/// The POST game state integration request includes this number of headers.
 /// We parse them to find the Content-Length.
 const EXPECTED_NUMBER_OF_HEADERS: usize = 7;
 
-/// The response expected by every GameState Integration request.
+/// The response expected for every game state integration request.
 /// Failure to deliver this response would cause the request to be retried infinitely.
 const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
@@ -92,6 +95,100 @@ where
     D: DeserializeOwned + std::fmt::Debug + Send,
 {
     async fn handle(self, gs: D);
+}
+
+#[async_trait]
+pub trait Handler: Send + Sync + 'static {
+    async fn handle(&self, event: bytes::Bytes);
+}
+
+#[async_trait]
+impl<F, Fut> Handler for F
+where
+    F: Fn(bytes::Bytes) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send,
+{
+    async fn handle(&self, event: bytes::Bytes) {
+        (self)(event).await;
+    }
+}
+
+/// A server that handles game state integration requests.
+pub struct Server {
+    uri: String,
+    handlers: Vec<Arc<dyn Handler>>,
+}
+
+impl Server {
+    /// Create a new Server with given URI.
+    ///
+    /// The provided URI must match the one used when configuring the game state integration.
+    pub fn new(uri: &str) -> Self {
+        Server {
+            uri: uri.to_owned(),
+            handlers: Vec::new(),
+        }
+    }
+
+    /// Register a new handler on this Server.
+    ///
+    /// The Server will handle all incoming data from game state integration using all registered handlers.
+    pub fn register<H>(mut self, handler: H) -> Self
+    where
+        H: Handler,
+    {
+        self.handlers.push(Arc::new(handler));
+        self
+    }
+
+    /// Run the game state integration server.
+    pub async fn run(self) -> Result<(), GSIServerError> {
+        let listener = TcpListener::bind(&self.uri).await?;
+        log::info!("Listening on: {:?}", listener.local_addr());
+
+        let (sender, _) = broadcast::channel(16);
+        self.handle_broadcast(&sender);
+
+        loop {
+            let (socket, addr) = listener.accept().await?;
+
+            let sender = sender.clone();
+
+            tokio::spawn(async move {
+                match process(socket).await {
+                    Err(e) => {
+                        log::error!("{}", e);
+                        return Err(e);
+                    }
+                    Ok(buf) => {
+                        sender.send(buf).unwrap();
+                    }
+                };
+
+                Ok(())
+            });
+        }
+    }
+
+    fn handle_broadcast(&self, broadcast: &broadcast::Sender<bytes::Bytes>) {
+        for handler in &self.handlers {
+            let handler = Arc::clone(handler);
+            let mut receiver = broadcast.subscribe();
+
+            tokio::spawn(async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok(data) => {
+                            handler.handle(data).await;
+                        }
+                        Err(_) => {
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+    }
 }
 
 /// A server that handles GameState Integration requests from Dota.
@@ -202,15 +299,17 @@ impl GSIServer {
     }
 }
 
-/// Process a TcpStream.
-/// Ensures the stream's contents can be parsed and returns an appropiate response to Dota.
-pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> {
+/// Process a game state integration request.
+///
+/// This function parses the request and reads the entire payload, returning it as a
+/// [`bytes::Bytes`].
+pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GSIServerError> {
     if let Err(e) = socket.readable().await {
         log::error!("socket is not readable");
         return Err(GSIServerError::from(e));
     };
 
-    let mut buf = BytesMut::with_capacity(INITIAL_REQUEST_BUFFER_CAPACITY_BYTES);
+    let mut buf = bytes::BytesMut::with_capacity(INITIAL_REQUEST_BUFFER_CAPACITY_BYTES);
     let request_length: usize;
     let content_length: usize;
 
@@ -258,7 +357,7 @@ pub async fn process(mut socket: TcpStream) -> Result<BytesMut, GSIServerError> 
         return Err(GSIServerError::from(e));
     };
 
-    Ok(buf.split_off(request_length))
+    Ok(buf.split_off(request_length).freeze())
 }
 
 /// Extract Content-Length value from a list of HTTP headers.
@@ -298,8 +397,12 @@ pub fn get_content_length_from_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net;
+    use std::time;
+    use tokio::sync::mpsc;
+    use tokio::time::{sleep, timeout};
 
-    const TEST_URI: &'static str = "127.0.0.1:0";
+    const TEST_URI: &'static str = "127.0.0.1:10080";
 
     #[test]
     fn test_get_content_length_from_headers() {
@@ -371,5 +474,68 @@ mod tests {
         let result = process(stream).await.expect("processing failed");
         assert_eq!(result.len(), expected.len());
         assert_eq!(result.as_ref(), expected);
+    }
+
+    #[tokio::test]
+    async fn test_server_handles_events() {
+        let sample_request = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:20080\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\nContent-Length: 173\r\n\r\n{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}";
+        let expected = bytes::Bytes::from_static(b"{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}");
+
+        let (tx1, mut rx1) = mpsc::channel(1);
+        let (tx2, mut rx2) = mpsc::channel(1);
+
+        tokio::spawn(async move {
+            Server::new("127.0.0.1:20080")
+                .register(move |event| {
+                    let tx1 = tx1.clone();
+                    println!("sending on 1");
+                    async move {
+                        let _ = &tx1.send(event).await.unwrap();
+                        println!("sent on 1");
+                    }
+                })
+                .register(move |event| {
+                    let tx2 = tx2.clone();
+                    println!("sending on 2");
+                    async move {
+                        let _ = &tx2.send(event).await.unwrap();
+                        println!("sent on 2");
+                    }
+                })
+                .run()
+                .await
+                .unwrap();
+        });
+
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let mut stream = TcpStream::connect("127.0.0.1:20080").await.unwrap();
+                let _ = stream.write_all(sample_request).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+
+        let mut v1 = Vec::new();
+        let mut v2 = Vec::new();
+
+        async fn capture(rx: &mut mpsc::Receiver<bytes::Bytes>, v: &mut Vec<bytes::Bytes>) {
+            v.push(rx.recv().await.unwrap());
+        }
+
+        if let Err(_) = timeout(time::Duration::from_secs(5), async {
+            tokio::join!(capture(&mut rx1, &mut v1), capture(&mut rx2, &mut v2));
+            tokio::join!(capture(&mut rx1, &mut v1), capture(&mut rx2, &mut v2));
+        })
+        .await
+        {
+            println!("did not receive values within 5 seconds");
+        }
+
+        assert_eq!(v1.len(), 2);
+        assert_eq!(v2.len(), 2);
+        assert_eq!(v1[0], &expected);
+        assert_eq!(v1[1], &expected);
+        assert_eq!(v2[0], &expected);
+        assert_eq!(v2[1], &expected);
     }
 }

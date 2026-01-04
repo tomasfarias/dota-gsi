@@ -1,28 +1,35 @@
 use clap::Parser;
+use serde::de::DeserializeOwned;
 
-use dota::{GSIServer, components::GameState};
+use dota::{components::GameState, Server};
 
-/// Echo back Dota GameState integration state.
-async fn echo_gamestate_handler(gs: GameState) {
-    println!("{}", gs);
+/// Echo back game state integration events.
+async fn echo_handler<T>(bytes: bytes::Bytes)
+where
+    T: DeserializeOwned + std::fmt::Display,
+{
+    let value: T = match serde_json::from_slice(&bytes) {
+        Err(e) => {
+            log::error!("Failed to deserialize JSON body: {}", e);
+            panic!("deserialize error");
+        }
+        Ok(v) => v,
+    };
+
+    println!("{:#}", value);
 }
 
-/// Echo back raw JSON events.
-async fn echo_json_handler(value: serde_json::Value) {
-    println!("{}", value);
-}
-
-/// Listen for Dota 2 events and echo (slam) them.
+/// Listen for events and echo (slam) them.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// URI for the server to listen for events.
-    /// This must be the same URI used in the Game State configuration file.
+    /// This must be the same URI used in the game state integration configuration file.
     #[arg(short, long)]
     uri: String,
 
-    /// Don't attempt to parse JSON data.
-    /// Echo raw JSON events as received from Dota 2.
+    /// Whether to deserialize JSON data or not.
+    /// When `true` then events are deserialized to a [`GameState`].
     #[arg(short, long)]
     raw: bool,
 }
@@ -33,13 +40,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
-    let server = GSIServer::new(&args.uri);
+    let mut server = Server::new(&args.uri);
 
     if args.raw {
-        server.run(echo_json_handler).await?;
+        server = server.register(echo_handler::<serde_json::Value>);
     } else {
-        server.run(echo_gamestate_handler).await?;
+        server = server.register(echo_handler::<GameState>);
     }
+
+    server.run().await?;
 
     Ok(())
 }
