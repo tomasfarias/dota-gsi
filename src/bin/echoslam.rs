@@ -4,11 +4,11 @@ use serde::de::DeserializeOwned;
 use dota::{Server, components::GameState};
 
 /// Echo back game state integration events.
-async fn echo_handler<T>(bytes: bytes::Bytes)
+async fn echo_handler<T>(event: bytes::Bytes)
 where
     T: DeserializeOwned + std::fmt::Display,
 {
-    let value: T = match serde_json::from_slice(&bytes) {
+    let value: T = match serde_json::from_slice(&event) {
         Err(e) => {
             log::error!("Failed to deserialize JSON body: {}", e);
             panic!("deserialize error");
@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server = server.register(echo_handler::<GameState>);
     }
 
-    server.serve().await?;
+    server.run().await?;
 
     Ok(())
 }
