@@ -1,7 +1,7 @@
 use clap::Parser;
 use serde::de::DeserializeOwned;
 
-use dota::{components::GameState, Server};
+use dota::{Server, components::GameState};
 
 /// Echo back game state integration events.
 async fn echo_handler<T>(bytes: bytes::Bytes)
