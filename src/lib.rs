@@ -37,8 +37,7 @@
 //!    }
 //!}
 //!
-//! Notice that the URI used in the configuration file must be the same URI used when
-//! initializing a [`Server`].
+//! Note the URI used in the configuration file must be the same URI used when initializing a [`Server`].
 //!
 //! [^configuration file]: Details on configuration file: https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration
 //! [^launch option]: Available launch options: https://help.steampowered.com/en/faqs/view/7d01-d2dd-d75e-2955
@@ -103,6 +102,7 @@ where
     }
 }
 
+/// Manage lifecycle of a handler registered in a server
 pub(crate) struct HandlerRegistration {
     inner: Box<dyn Handler>,
     is_shutdown: bool,
@@ -151,6 +151,7 @@ impl HandlerRegistration {
     }
 }
 
+/// Manage lifecycle of a server's listening task
 pub(crate) struct Listener {
     uri: String,
     is_shutdown: bool,
@@ -224,11 +225,17 @@ impl Listener {
     }
 }
 
-/// A server that handles game state integration requests.
+/// A [`Server`] that handles game state integration requests.
+///
+/// The [`Server`] spawns a task per registered handler to handle events incoming from the game state integration.
+/// On server shutdown, any pending tasks are canceled. A separate listener task is spawned to actually listen
+/// for game state integration requests on the configured URI, process them to extract the payload, and broadcast
+/// each event to all registered handlers.
 pub struct Server {
     uri: String,
     notify_shutdown: broadcast::Sender<()>,
     send_events: broadcast::Sender<bytes::Bytes>,
+    is_shutdown: bool,
 }
 
 impl Server {
@@ -243,12 +250,13 @@ impl Server {
             uri: uri.to_owned(),
             notify_shutdown,
             send_events,
+            is_shutdown: false,
         }
     }
 
     /// Register a new handler on this Server.
     ///
-    /// The Server will handle all incoming data from game state integration using all registered handlers.
+    /// Incoming events from game state integration will be broadcast to all registered handlers.
     pub fn register<H>(self, handler: H) -> Self
     where
         H: Handler,
@@ -263,6 +271,7 @@ impl Server {
         self
     }
 
+    /// Start listening to requests and return a handle to the associated [`Listener`] task.
     pub fn start(&self) -> task::JoinHandle<Result<(), GameStateIntegrationError>> {
         let listener = Listener::new(
             &self.uri,
@@ -273,7 +282,8 @@ impl Server {
         tokio::spawn(async move { listener.run().await })
     }
 
-    pub async fn serve(&self) -> Result<(), GameStateIntegrationError> {
+    /// Run the [`Server`] forever.
+    pub async fn run(&self) -> Result<(), GameStateIntegrationError> {
         match self.start().await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(gsierr)) => Err(gsierr),
@@ -281,8 +291,21 @@ impl Server {
         }
     }
 
-    pub fn shutdown(self) {
+    /// Shutdown the server.
+    pub fn shutdown(mut self) {
         let _ = self.notify_shutdown.send(());
+        self.is_shutdown = true;
+    }
+}
+
+/// Implement [`Drop`] to shutdown all tasks on [`Server`] drop.
+impl Drop for Server {
+    fn drop(&mut self) {
+        // if true it would mean it was dropped from shutdown method
+        // so no need to shutdown again
+        if !self.is_shutdown {
+            let _ = self.notify_shutdown.send(());
+        }
     }
 }
 
@@ -382,7 +405,6 @@ pub fn get_content_length_from_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net;
     use std::time;
     use tokio::sync::mpsc;
     use tokio::time::{sleep, timeout};

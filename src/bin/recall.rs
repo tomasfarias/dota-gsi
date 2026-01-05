@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_dir: output_dir.clone(),
     };
 
-    Server::new(&args.uri).register(handler).serve().await?;
+    Server::new(&args.uri).register(handler).run().await?;
 
     Ok(())
 }
