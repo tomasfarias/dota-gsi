@@ -127,6 +127,11 @@ impl HandlerRegistration {
         }
     }
 
+    #[allow(dead_code)]
+    pub async fn is_shutdown(&self) -> bool {
+        self.is_shutdown
+    }
+
     pub(crate) async fn run(mut self) {
         loop {
             tokio::select! {
@@ -167,6 +172,11 @@ impl Listener {
         }
     }
 
+    #[allow(dead_code)]
+    pub async fn is_shutdown(&self) -> bool {
+        self.is_shutdown
+    }
+
     pub(crate) async fn run(mut self) -> Result<(), GameStateIntegrationError> {
         let listener = TcpListener::bind(&self.uri).await?;
         log::info!("Listening on: {:?}", listener.local_addr());
@@ -188,16 +198,14 @@ impl Listener {
                         match process(socket).await {
                             Err(e) => {
                                 log::error!("{}", e);
-                                self.is_shutdown = true;
-                                return Err(e);
+                                Err(e)
                             }
                             Ok(buf) => match sender.send(buf) {
                                 Ok(_) => Ok(()),
                                 Err(_) => {
                                     // send can only fail if there are no active receivers
                                     // meaning no where registered or the server is shutting down.
-                                    self.is_shutdown = true;
-                                    return Err(GameStateIntegrationError::NoHandlersAvailable);
+                                    Err(GameStateIntegrationError::NoHandlersAvailable)
                                 }
                             },
                         }
