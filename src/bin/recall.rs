@@ -5,7 +5,7 @@ use clap::Parser;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use dota::{GSIServer, GameStateHandler};
+use dota::{Handler, Server};
 
 #[derive(Clone, Debug)]
 struct RecallHandler {
@@ -13,19 +13,17 @@ struct RecallHandler {
 }
 
 #[async_trait]
-impl GameStateHandler<serde_json::Value> for RecallHandler {
+impl Handler for RecallHandler {
     /// Save raw GameState Integration as JSON for later recalling
-    async fn handle(self, gs: serde_json::Value) {
+    async fn handle(&self, event: bytes::Bytes) {
         let file_name = format!("DotaGSI_{}.json", chrono::offset::Local::now());
         let mut file_path = self.output_dir.clone();
         file_path.push(file_name);
 
-        let json_str = serde_json::to_string(&gs).expect("Unable to cast to JSON string.");
-
         let mut file = File::create(file_path)
             .await
             .expect("Failed to create file for DotaGSI JSON.");
-        file.write_all(json_str.as_bytes())
+        file.write_all(&event)
             .await
             .expect("Failed to write DotaGSI JSON file.");
     }
@@ -60,8 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_dir: output_dir.clone(),
     };
 
-    let server = GSIServer::new(&args.uri);
-    server.run_with_handler(handler).await?;
+    Server::new(&args.uri).register(handler).serve().await?;
 
     Ok(())
 }
