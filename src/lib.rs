@@ -44,12 +44,8 @@
 //! [^launch option]: Available launch options: https://help.steampowered.com/en/faqs/view/7d01-d2dd-d75e-2955
 use std::future::Future;
 use std::io;
-use std::pin::Pin;
-use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde::de::DeserializeOwned;
-use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
@@ -70,33 +66,27 @@ const EXPECTED_NUMBER_OF_HEADERS: usize = 7;
 /// Failure to deliver this response would cause the request to be retried infinitely.
 const OK: &str = "HTTP/1.1 200 OK\ncontent-type: text/html\n";
 
-#[derive(Error, Debug)]
-pub enum GSIServerError {
-    #[error("incomplete headers have been parsed from GSI request")]
+#[derive(thiserror::Error, Debug)]
+pub enum GameStateIntegrationError {
+    #[error("incomplete headers from game state integration request")]
     IncompleteHeaders,
-    #[error("failed to read (write) from (to) socket listening to GSI")]
-    SocketError(#[from] io::Error),
-    #[error("socket was closed")]
-    SocketClosed,
-    #[error("failed to complete the assigned GSI task")]
-    TaskError(#[from] task::JoinError),
-    #[error("failed to parse game state integration from JSON")]
-    ParseJSONError(#[from] serde_json::Error),
-    #[error("failed to parse Content-Length Header sent by Dota: {0}")]
-    ParseContentLengthError(String),
-    #[error("failed to parse Request sent by Dota")]
-    ParseRequestError(#[from] httparse::Error),
+    #[error("failed to read from socket")]
+    SocketRead(#[from] io::Error),
+    #[error("no handlers available to process request, is the server shutting down?")]
+    NoHandlersAvailable,
+    #[error("invalid content length header: {0}")]
+    InvalidContentLength(String),
+    #[error("missing Content-Length header in request")]
+    MissingContentLengthHeader,
+    #[error("invalid request received")]
+    InvalidRequest(#[from] httparse::Error),
+    #[error("an error occurred while running the server")]
+    Unknown(#[from] task::JoinError),
 }
 
-/// Trait implemented by handlers of Game State data.
-#[async_trait]
-pub trait GameStateHandler<D>
-where
-    D: DeserializeOwned + std::fmt::Debug + Send,
-{
-    async fn handle(self, gs: D);
-}
-
+/// Trait for any async function or struct that can be used to handle game state integration events.
+///
+/// This trait is automatically implemented for async functions and closures.
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
     async fn handle(&self, event: bytes::Bytes);
@@ -113,10 +103,124 @@ where
     }
 }
 
+pub(crate) struct HandlerRegistration {
+    inner: Box<dyn Handler>,
+    is_shutdown: bool,
+    notify: broadcast::Receiver<()>,
+    events: broadcast::Receiver<bytes::Bytes>,
+}
+
+impl HandlerRegistration {
+    pub(crate) fn new<H>(
+        handler: H,
+        notify: broadcast::Receiver<()>,
+        events: broadcast::Receiver<bytes::Bytes>,
+    ) -> Self
+    where
+        H: Handler,
+    {
+        Self {
+            inner: Box::new(handler),
+            is_shutdown: false,
+            notify,
+            events,
+        }
+    }
+
+    pub(crate) async fn run(mut self) {
+        loop {
+            tokio::select! {
+                received = self.events.recv() => {
+                    match received {
+                        Ok(event) => {self.inner.handle(event).await;},
+                        Err(_) => {break;}
+                    }
+                }
+                _ = self.notify.recv() => {
+                    break;
+                }
+            }
+        }
+
+        self.is_shutdown = true;
+    }
+}
+
+pub(crate) struct Listener {
+    uri: String,
+    is_shutdown: bool,
+    notify: broadcast::Receiver<()>,
+    send_events: broadcast::Sender<bytes::Bytes>,
+}
+
+impl Listener {
+    pub(crate) fn new(
+        uri: &str,
+        notify: broadcast::Receiver<()>,
+        send_events: broadcast::Sender<bytes::Bytes>,
+    ) -> Self {
+        Self {
+            uri: uri.to_owned(),
+            is_shutdown: false,
+            notify,
+            send_events,
+        }
+    }
+
+    pub(crate) async fn run(mut self) -> Result<(), GameStateIntegrationError> {
+        let listener = TcpListener::bind(&self.uri).await?;
+        log::info!("Listening on: {:?}", listener.local_addr());
+
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (socket, _) = match accepted {
+                        Ok(val) => val,
+                        Err(e) => {
+                            self.is_shutdown = true;
+                            return Err(GameStateIntegrationError::SocketRead(e));
+                        }
+                    };
+
+                    let sender = self.send_events.clone();
+
+                    tokio::spawn(async move {
+                        match process(socket).await {
+                            Err(e) => {
+                                log::error!("{}", e);
+                                self.is_shutdown = true;
+                                return Err(e);
+                            }
+                            Ok(buf) => match sender.send(buf) {
+                                Ok(_) => Ok(()),
+                                Err(_) => {
+                                    // send can only fail if there are no active receivers
+                                    // meaning no where registered or the server is shutting down.
+                                    self.is_shutdown = true;
+                                    return Err(GameStateIntegrationError::NoHandlersAvailable);
+                                }
+                            },
+                        }
+                    });
+
+                }
+                _ = self.notify.recv() => {
+                    break;
+                }
+            }
+        }
+
+        self.is_shutdown = true;
+
+        Ok(())
+    }
+}
+
 /// A server that handles game state integration requests.
 pub struct Server {
     uri: String,
-    handlers: Vec<Arc<dyn Handler>>,
+    notify_shutdown: broadcast::Sender<()>,
+    send_events: broadcast::Sender<bytes::Bytes>,
 }
 
 impl Server {
@@ -124,178 +228,53 @@ impl Server {
     ///
     /// The provided URI must match the one used when configuring the game state integration.
     pub fn new(uri: &str) -> Self {
+        let (notify_shutdown, _) = broadcast::channel(1);
+        let (send_events, _) = broadcast::channel(16);
+
         Server {
             uri: uri.to_owned(),
-            handlers: Vec::new(),
+            notify_shutdown,
+            send_events,
         }
     }
 
     /// Register a new handler on this Server.
     ///
     /// The Server will handle all incoming data from game state integration using all registered handlers.
-    pub fn register<H>(mut self, handler: H) -> Self
+    pub fn register<H>(self, handler: H) -> Self
     where
         H: Handler,
     {
-        self.handlers.push(Arc::new(handler));
+        let registration = HandlerRegistration::new(
+            handler,
+            self.notify_shutdown.subscribe(),
+            self.send_events.subscribe(),
+        );
+        tokio::spawn(async move { registration.run().await });
+
         self
     }
 
-    /// Run the game state integration server.
-    pub async fn run(self) -> Result<(), GSIServerError> {
-        let listener = TcpListener::bind(&self.uri).await?;
-        log::info!("Listening on: {:?}", listener.local_addr());
+    pub fn start(&self) -> task::JoinHandle<Result<(), GameStateIntegrationError>> {
+        let listener = Listener::new(
+            &self.uri,
+            self.notify_shutdown.subscribe(),
+            self.send_events.clone(),
+        );
 
-        let (sender, _) = broadcast::channel(16);
-        self.handle_broadcast(&sender);
+        tokio::spawn(async move { listener.run().await })
+    }
 
-        loop {
-            let (socket, addr) = listener.accept().await?;
-
-            let sender = sender.clone();
-
-            tokio::spawn(async move {
-                match process(socket).await {
-                    Err(e) => {
-                        log::error!("{}", e);
-                        return Err(e);
-                    }
-                    Ok(buf) => {
-                        sender.send(buf).unwrap();
-                    }
-                };
-
-                Ok(())
-            });
+    pub async fn serve(&self) -> Result<(), GameStateIntegrationError> {
+        match self.start().await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(gsierr)) => Err(gsierr),
+            Err(joinerr) => Err(GameStateIntegrationError::Unknown(joinerr)),
         }
     }
 
-    fn handle_broadcast(&self, broadcast: &broadcast::Sender<bytes::Bytes>) {
-        for handler in &self.handlers {
-            let handler = Arc::clone(handler);
-            let mut receiver = broadcast.subscribe();
-
-            tokio::spawn(async move {
-                loop {
-                    match receiver.recv().await {
-                        Ok(data) => {
-                            handler.handle(data).await;
-                        }
-                        Err(_) => {
-                            break;
-                        }
-                    }
-                }
-            });
-        }
-    }
-}
-
-/// A server that handles GameState Integration requests from Dota.
-/// The URI used in the configuration file must be the same URI used when creating a new [`GSIServer`].
-pub struct GSIServer {
-    uri: String,
-}
-
-impl Default for GSIServer {
-    fn default() -> Self {
-        GSIServer {
-            uri: "127.0.0.1:3000".to_owned(),
-        }
-    }
-}
-
-impl GSIServer {
-    /// Create a new GSIServer with given URI.
-    pub fn new(uri: &str) -> Self {
-        GSIServer {
-            uri: uri.to_owned(),
-        }
-    }
-
-    /// Run the Game State Integration server.
-    /// A handler function is taken to process the data sent by Dota 2.
-    pub async fn run<D, U>(
-        self,
-        handler: impl Fn(D) -> U + Sync + Send + Copy + 'static,
-    ) -> Result<(), GSIServerError>
-    where
-        D: DeserializeOwned + std::fmt::Debug + Send,
-        U: Future + Send + Sync,
-        U::Output: Send,
-    {
-        let listener = TcpListener::bind(self.uri).await?;
-        log::info!("Listening on: {:?}", listener.local_addr());
-
-        loop {
-            let (socket, addr) = listener.accept().await?;
-            log::info!("Accepted: {}", addr);
-
-            tokio::spawn(async move {
-                log::debug!("Task spawned");
-
-                match process(socket).await {
-                    Err(e) => {
-                        log::error!("{}", e);
-                        return Err(e);
-                    }
-                    Ok(buf) => match serde_json::from_slice(&buf) {
-                        Err(e) => {
-                            log::debug!("{:?}", buf);
-                            log::error!("Failed to parse JSON body: {}", e);
-                            return Err(GSIServerError::from(e));
-                        }
-                        Ok(parsed) => {
-                            handler(parsed).await;
-                        }
-                    },
-                };
-
-                Ok(())
-            });
-        }
-    }
-
-    /// Run the Game State Integration server.
-    /// A handler function is taken to process the data sent by Dota 2.
-    pub async fn run_with_handler<D>(
-        self,
-        handler: impl GameStateHandler<D> + Send + Sync + Clone + 'static,
-    ) -> Result<(), GSIServerError>
-    where
-        D: DeserializeOwned + std::fmt::Debug + Send,
-    {
-        let listener = TcpListener::bind(self.uri).await?;
-        log::info!("Listening on: {:?}", listener.local_addr());
-
-        loop {
-            let (socket, addr) = listener.accept().await?;
-            log::info!("Accepted: {}", addr);
-            // Need to clone as handler will be moved by spawn.
-            let this_handler = handler.clone();
-
-            tokio::spawn(async move {
-                log::debug!("Task spawned");
-
-                match process(socket).await {
-                    Err(e) => {
-                        log::error!("{}", e);
-                        return Err(e);
-                    }
-                    Ok(buf) => match serde_json::from_slice(&buf) {
-                        Err(e) => {
-                            log::error!("Failed to parse JSON body: {}", e);
-                            return Err(GSIServerError::from(e));
-                        }
-                        Ok(parsed) => {
-                            this_handler.handle(parsed).await;
-                        }
-                    },
-                };
-
-                Ok(())
-            });
-        }
+    pub fn shutdown(self) {
+        let _ = self.notify_shutdown.send(());
     }
 }
 
@@ -303,10 +282,10 @@ impl GSIServer {
 ///
 /// This function parses the request and reads the entire payload, returning it as a
 /// [`bytes::Bytes`].
-pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GSIServerError> {
+pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GameStateIntegrationError> {
     if let Err(e) = socket.readable().await {
         log::error!("socket is not readable");
-        return Err(GSIServerError::from(e));
+        return Err(GameStateIntegrationError::from(e));
     };
 
     let mut buf = bytes::BytesMut::with_capacity(INITIAL_REQUEST_BUFFER_CAPACITY_BYTES);
@@ -318,7 +297,7 @@ pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GSIServerErr
             Ok(n) => n,
             Err(e) => {
                 log::error!("failed to read request from socket: {}", e);
-                return Err(GSIServerError::from(e));
+                return Err(GameStateIntegrationError::from(e));
             }
         };
 
@@ -333,7 +312,7 @@ pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GSIServerErr
             }
             Err(e) => {
                 log::error!("failed to parse request: {}", e);
-                return Err(GSIServerError::from(e));
+                return Err(GameStateIntegrationError::from(e));
             }
         };
         log::debug!("headers: {:?}", headers);
@@ -347,14 +326,14 @@ pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GSIServerErr
             Ok(n) => n,
             Err(e) => {
                 log::error!("failed to read body from socket: {}", e);
-                return Err(GSIServerError::from(e));
+                return Err(GameStateIntegrationError::from(e));
             }
         };
     }
 
     if let Err(e) = socket.write_all(OK.as_bytes()).await {
         log::error!("failed to write to socket: {}", e);
-        return Err(GSIServerError::from(e));
+        return Err(GameStateIntegrationError::from(e));
     };
 
     Ok(buf.split_off(request_length).freeze())
@@ -363,7 +342,7 @@ pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GSIServerErr
 /// Extract Content-Length value from a list of HTTP headers.
 pub fn get_content_length_from_headers(
     headers: &[httparse::Header],
-) -> Result<usize, GSIServerError> {
+) -> Result<usize, GameStateIntegrationError> {
     match headers
         .iter()
         .filter(|h| h.name == "Content-Length")
@@ -374,7 +353,7 @@ pub fn get_content_length_from_headers(
             let str_length = match std::str::from_utf8(value) {
                 Ok(s) => s,
                 Err(e) => {
-                    return Err(GSIServerError::ParseContentLengthError(format!(
+                    return Err(GameStateIntegrationError::InvalidContentLength(format!(
                         "failed to parse bytes as str: {}",
                         e
                     )));
@@ -382,15 +361,13 @@ pub fn get_content_length_from_headers(
             };
             match str_length.parse::<usize>() {
                 Ok(n) => Ok(n),
-                Err(e) => Err(GSIServerError::ParseContentLengthError(format!(
+                Err(e) => Err(GameStateIntegrationError::InvalidContentLength(format!(
                     "failed to parse str into usize: {}",
                     e
                 ))),
             }
         }
-        None => Err(GSIServerError::ParseContentLengthError(
-            "Content-Length header not found".to_string(),
-        )),
+        None => Err(GameStateIntegrationError::MissingContentLengthHeader),
     }
 }
 
@@ -431,7 +408,7 @@ mod tests {
 
         assert!(matches!(
             content_length,
-            Err(GSIServerError::ParseContentLengthError(_))
+            Err(GameStateIntegrationError::MissingContentLengthHeader)
         ));
     }
 
@@ -447,7 +424,7 @@ mod tests {
 
         assert!(matches!(
             content_length,
-            Err(GSIServerError::ParseContentLengthError(_))
+            Err(GameStateIntegrationError::InvalidContentLength(_))
         ));
     }
 
@@ -484,42 +461,47 @@ mod tests {
         let (tx1, mut rx1) = mpsc::channel(1);
         let (tx2, mut rx2) = mpsc::channel(1);
 
-        tokio::spawn(async move {
-            Server::new("127.0.0.1:20080")
-                .register(move |event| {
-                    let tx1 = tx1.clone();
-                    println!("sending on 1");
-                    async move {
-                        let _ = &tx1.send(event).await.unwrap();
-                        println!("sent on 1");
-                    }
-                })
-                .register(move |event| {
-                    let tx2 = tx2.clone();
-                    println!("sending on 2");
-                    async move {
-                        let _ = &tx2.send(event).await.unwrap();
-                        println!("sent on 2");
-                    }
-                })
-                .run()
-                .await
-                .unwrap();
-        });
+        let server = Server::new("127.0.0.1:30080")
+            .register(move |event| {
+                let tx1 = tx1.clone();
+                async move {
+                    let _ = &tx1.send(event).await.unwrap();
+                }
+            })
+            .register(move |event| {
+                let tx2 = tx2.clone();
+                async move {
+                    let _ = &tx2.send(event).await.unwrap();
+                }
+            });
+
+        server.start();
+
+        // Advance the event loop for listener to start
+        sleep(time::Duration::from_millis(10)).await;
 
         tokio::spawn(async move {
             for _ in 0..2 {
-                let mut stream = TcpStream::connect("127.0.0.1:20080").await.unwrap();
+                let mut stream = TcpStream::connect("127.0.0.1:30080").await.unwrap();
                 let _ = stream.write_all(sample_request).await;
                 let _ = stream.shutdown().await;
             }
         });
 
+        // Advance the event loop for events to be processed
+        sleep(time::Duration::from_millis(10)).await;
+
+        server.shutdown();
+
         let mut v1 = Vec::new();
         let mut v2 = Vec::new();
 
         async fn capture(rx: &mut mpsc::Receiver<bytes::Bytes>, v: &mut Vec<bytes::Bytes>) {
-            v.push(rx.recv().await.unwrap());
+            println!("Here");
+            let val = rx.recv().await;
+            println!("{:?}", val);
+            v.push(val.unwrap());
+            println!("There");
         }
 
         if let Err(_) = timeout(time::Duration::from_secs(5), async {

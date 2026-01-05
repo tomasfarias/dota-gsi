@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         server = server.register(echo_handler::<GameState>);
     }
 
-    server.run().await?;
+    server.serve().await?;
 
     Ok(())
 }
