@@ -1,6 +1,6 @@
 [package]
 name = "dota-gsi"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Tomas Farias <tomas@tomasfarias.dev>"]
 edition = "2024"
 description = "Game State Integration with Dota 2 in Rust. Provides a server that listens for events sent by Dota 2."
