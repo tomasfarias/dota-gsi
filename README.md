@@ -14,7 +14,7 @@ Integration requires:
 The configuration file can have any name name, but must be prefixed by `gamestate_integration_`.
 For example, `gamestate_integration_test.cfg` would be located:
 * In Linux: `~/.steam/steam/steamapps/common/dota 2 beta/game/dota/cfg/gamestate_integration_test.cfg`
-* In Windows: `D:\Steam\steamapps\common\dota 2 beta\csgo\cfg\gamestate_integration_test.cfg`
+* In Windows: `D:\Steam\steamapps\common\dota 2 beta\dota\cfg\gamestate_integration_test.cfg`
 
 Here's a sample configuration file:
 
