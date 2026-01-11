@@ -5,7 +5,7 @@ use clap::Parser;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use dota::{Handler, Server};
+use dota::{Handler, HandlerResult, ServerBuilder};
 
 #[derive(Clone, Debug)]
 struct RecallHandler {
@@ -15,7 +15,7 @@ struct RecallHandler {
 #[async_trait]
 impl Handler for RecallHandler {
     /// Save raw GameState Integration as JSON for later recalling
-    async fn handle(&self, event: bytes::Bytes) {
+    async fn handle(&self, event: bytes::Bytes) -> HandlerResult {
         let file_name = format!("DotaGSI_{}.json", chrono::offset::Local::now());
         let mut file_path = self.output_dir.clone();
         file_path.push(file_name);
@@ -23,9 +23,9 @@ impl Handler for RecallHandler {
         let mut file = File::create(file_path)
             .await
             .expect("Failed to create file for DotaGSI JSON.");
-        file.write_all(&event)
-            .await
-            .expect("Failed to write DotaGSI JSON file.");
+        file.write_all(&event).await?;
+
+        Ok(())
     }
 }
 
@@ -58,7 +58,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_dir: output_dir.clone(),
     };
 
-    Server::new(&args.uri).register(handler).run().await?;
+    ServerBuilder::new(&args.uri)
+        .register(handler)
+        .start()?
+        .run_forever()
+        .await;
 
     Ok(())
 }

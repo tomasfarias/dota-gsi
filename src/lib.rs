@@ -37,20 +37,24 @@
 //!    }
 //!}
 //!
-//! Note the URI used in the configuration file must be the same URI used when initializing a [`Server`].
+//! Note the URI used in the configuration file must be the same URI used with a [`ServerBuilder`].
 //!
 //! [^configuration file]: Details on configuration file: https://developer.valvesoftware.com/wiki/Counter-Strike:_Global_Offensive_Game_State_Integration
 //! [^launch option]: Available launch options: https://help.steampowered.com/en/faqs/view/7d01-d2dd-d75e-2955
+use std::error::Error as StdError;
+use std::fmt::{self, Display};
 use std::future::Future;
 use std::io;
 
 use async_trait::async_trait;
+use futures::{StreamExt, stream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::task;
 
 pub mod components;
+pub mod handlers;
 
 /// The payload sent on every game state integration request is usually between 50-60kb.
 /// We initialize a buffer to read the request with this initial capacity.
@@ -79,26 +83,37 @@ pub enum GameStateIntegrationError {
     MissingContentLengthHeader,
     #[error("invalid request received")]
     InvalidRequest(#[from] httparse::Error),
+    #[error("server has already shutdown")]
+    ServerShutdown,
+    #[error("handler failed when handling event")]
+    Handler {
+        #[source]
+        source: anyhow::Error,
+    },
     #[error("an error occurred while running the server")]
     Unknown(#[from] task::JoinError),
 }
+
+pub type HandlerResult = Result<(), anyhow::Error>;
 
 /// Trait for any async function or struct that can be used to handle game state integration events.
 ///
 /// This trait is automatically implemented for async functions and closures.
 #[async_trait]
 pub trait Handler: Send + Sync + 'static {
-    async fn handle(&self, event: bytes::Bytes);
+    async fn handle(&self, event: bytes::Bytes) -> HandlerResult;
 }
 
 #[async_trait]
-impl<F, Fut> Handler for F
+impl<F, Fut, E> Handler for F
 where
     F: Fn(bytes::Bytes) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = ()> + Send,
+    Fut: Future<Output = Result<(), E>> + Send,
+    E: Into<anyhow::Error>,
 {
-    async fn handle(&self, event: bytes::Bytes) {
-        (self)(event).await;
+    async fn handle(&self, event: bytes::Bytes) -> HandlerResult {
+        (self)(event).await.map_err(|e| e.into())?;
+        Ok(())
     }
 }
 
@@ -127,17 +142,16 @@ impl HandlerRegistration {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn is_shutdown(&self) -> bool {
-        self.is_shutdown
-    }
-
-    pub(crate) async fn run(mut self) {
+    pub(crate) async fn run(mut self) -> Result<(), GameStateIntegrationError> {
         loop {
             tokio::select! {
                 received = self.events.recv() => {
                     match received {
-                        Ok(event) => {self.inner.handle(event).await;},
+                        Ok(event) => {
+                            if let Err(e) = self.inner.handle(event).await {
+                                return Err(GameStateIntegrationError::Handler{source: e});
+                            };
+                        },
                         Err(_) => {break;}
                     }
                 }
@@ -148,6 +162,13 @@ impl HandlerRegistration {
         }
 
         self.is_shutdown = true;
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_shutdown(&self) -> bool {
+        self.is_shutdown
     }
 }
 
@@ -173,11 +194,6 @@ impl Listener {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn is_shutdown(&self) -> bool {
-        self.is_shutdown
-    }
-
     pub(crate) async fn run(mut self) -> Result<(), GameStateIntegrationError> {
         let listener = TcpListener::bind(&self.uri).await?;
         log::info!("Listening on: {:?}", listener.local_addr());
@@ -192,6 +208,11 @@ impl Listener {
                             return Err(GameStateIntegrationError::SocketRead(e));
                         }
                     };
+
+                    if self.send_events.receiver_count() == 0 {
+                        // terminate if no handlers available
+                        return Err(GameStateIntegrationError::NoHandlersAvailable);
+                    }
 
                     let sender = self.send_events.clone();
 
@@ -223,7 +244,40 @@ impl Listener {
 
         Ok(())
     }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_shutdown(&self) -> bool {
+        self.is_shutdown
+    }
 }
+
+#[derive(Debug)]
+pub struct ServerError {
+    listener_error: Option<GameStateIntegrationError>,
+    handler_errors: Option<Vec<GameStateIntegrationError>>,
+}
+
+impl Display for ServerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "There were one or more errors while running the server")?;
+
+        if let Some(e) = self.listener_error.as_ref() {
+            writeln!(f)?;
+            write!(f, "- {:#}", e)?;
+        }
+
+        if let Some(errors) = self.handler_errors.as_ref() {
+            for e in errors {
+                writeln!(f)?;
+                write!(f, "- {:#}", e)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl StdError for ServerError {}
 
 /// A [`Server`] that handles game state integration requests.
 ///
@@ -232,13 +286,86 @@ impl Listener {
 /// for game state integration requests on the configured URI, process them to extract the payload, and broadcast
 /// each event to all registered handlers.
 pub struct Server {
+    listener: Option<task::JoinHandle<Result<(), GameStateIntegrationError>>>,
+    handlers: Vec<task::JoinHandle<Result<(), GameStateIntegrationError>>>,
+    notify_shutdown: broadcast::Sender<()>,
+    is_shutdown: bool,
+}
+
+impl Server {
+    pub fn new(
+        listener: task::JoinHandle<Result<(), GameStateIntegrationError>>,
+        handlers: impl IntoIterator<Item = task::JoinHandle<Result<(), GameStateIntegrationError>>>,
+        notify_shutdown: broadcast::Sender<()>,
+    ) -> Self {
+        Self {
+            listener: Some(listener),
+            handlers: handlers.into_iter().collect(),
+            notify_shutdown,
+            is_shutdown: false,
+        }
+    }
+
+    pub async fn run_forever(&self) {
+        let _ = self.notify_shutdown.subscribe().recv().await;
+    }
+
+    /// Shutdown the server.
+    pub async fn shutdown(&mut self) -> Result<(), ServerError> {
+        let _ = self.notify_shutdown.send(());
+
+        let listener_result = if let Some(listener) = self.listener.take() {
+            match listener.await {
+                Ok(r) => r,
+                Err(e) => Err(GameStateIntegrationError::Unknown(e)),
+            }
+        } else {
+            Ok(())
+        };
+
+        let mut handler_errors: Vec<GameStateIntegrationError> = Vec::new();
+        let mut futures: stream::FuturesUnordered<_> = self.handlers.drain(..).collect();
+        while let Some(result) = futures.next().await {
+            match result {
+                Ok(Err(e)) => handler_errors.push(e),
+                Err(e) => handler_errors.push(GameStateIntegrationError::from(e)),
+                Ok(Ok(())) => {}
+            }
+        }
+
+        self.is_shutdown = true;
+
+        match (listener_result, handler_errors.len()) {
+            (Ok(()), 0) => Ok(()),
+            (Err(e), 0) => Err(ServerError {
+                listener_error: Some(e),
+                handler_errors: None,
+            }),
+            (Ok(()), _) => Err(ServerError {
+                listener_error: None,
+                handler_errors: Some(handler_errors),
+            }),
+            (Err(e), _) => Err(ServerError {
+                listener_error: Some(e),
+                handler_errors: Some(handler_errors),
+            }),
+        }
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.is_shutdown
+    }
+}
+
+pub struct ServerBuilder {
     uri: String,
+    handlers: Vec<HandlerRegistration>,
     notify_shutdown: broadcast::Sender<()>,
     send_events: broadcast::Sender<bytes::Bytes>,
     is_shutdown: bool,
 }
 
-impl Server {
+impl ServerBuilder {
     /// Create a new Server with given URI.
     ///
     /// The provided URI must match the one used when configuring the game state integration.
@@ -246,18 +373,19 @@ impl Server {
         let (notify_shutdown, _) = broadcast::channel(1);
         let (send_events, _) = broadcast::channel(16);
 
-        Server {
+        Self {
             uri: uri.to_owned(),
             notify_shutdown,
             send_events,
             is_shutdown: false,
+            handlers: Vec::new(),
         }
     }
 
     /// Register a new handler on this Server.
     ///
     /// Incoming events from game state integration will be broadcast to all registered handlers.
-    pub fn register<H>(self, handler: H) -> Self
+    pub fn register<H>(mut self, handler: H) -> Self
     where
         H: Handler,
     {
@@ -266,46 +394,30 @@ impl Server {
             self.notify_shutdown.subscribe(),
             self.send_events.subscribe(),
         );
-        tokio::spawn(async move { registration.run().await });
+        self.handlers.push(registration);
 
         self
     }
 
     /// Start listening to requests and return a handle to the associated [`Listener`] task.
-    pub fn start(&self) -> task::JoinHandle<Result<(), GameStateIntegrationError>> {
+    pub fn start(self) -> Result<Server, GameStateIntegrationError> {
+        if self.is_shutdown {
+            return Err(GameStateIntegrationError::ServerShutdown);
+        }
+
         let listener = Listener::new(
             &self.uri,
             self.notify_shutdown.subscribe(),
-            self.send_events.clone(),
+            self.send_events,
         );
 
-        tokio::spawn(async move { listener.run().await })
-    }
-
-    /// Run the [`Server`] forever.
-    pub async fn run(&self) -> Result<(), GameStateIntegrationError> {
-        match self.start().await {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(gsierr)) => Err(gsierr),
-            Err(joinerr) => Err(GameStateIntegrationError::Unknown(joinerr)),
-        }
-    }
-
-    /// Shutdown the server.
-    pub fn shutdown(mut self) {
-        let _ = self.notify_shutdown.send(());
-        self.is_shutdown = true;
-    }
-}
-
-/// Implement [`Drop`] to shutdown all tasks on [`Server`] drop.
-impl Drop for Server {
-    fn drop(&mut self) {
-        // if true it would mean it was dropped from shutdown method
-        // so no need to shutdown again
-        if !self.is_shutdown {
-            let _ = self.notify_shutdown.send(());
-        }
+        Ok(Server::new(
+            tokio::spawn(async move { listener.run().await }),
+            self.handlers
+                .into_iter()
+                .map(|h| tokio::spawn(async move { h.run().await })),
+            self.notify_shutdown,
+        ))
     }
 }
 
@@ -488,24 +600,26 @@ mod tests {
         let sample_request = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:20080\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\nContent-Length: 173\r\n\r\n{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}";
         let expected = bytes::Bytes::from_static(b"{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}");
 
-        let (tx1, mut rx1) = mpsc::channel(1);
-        let (tx2, mut rx2) = mpsc::channel(1);
+        let (tx1, mut rx1) = mpsc::channel(2);
+        let (tx2, mut rx2) = mpsc::channel(2);
 
-        let server = Server::new("127.0.0.1:30080")
+        let mut server = ServerBuilder::new("127.0.0.1:30080")
             .register(move |event| {
                 let tx1 = tx1.clone();
                 async move {
-                    let _ = &tx1.send(event).await.unwrap();
+                    let _ = &tx1.send(event).await?;
+                    Ok::<(), mpsc::error::SendError<bytes::Bytes>>(())
                 }
             })
             .register(move |event| {
                 let tx2 = tx2.clone();
                 async move {
-                    let _ = &tx2.send(event).await.unwrap();
+                    let _ = &tx2.send(event).await?;
+                    Ok::<(), mpsc::error::SendError<bytes::Bytes>>(())
                 }
-            });
-
-        server.start();
+            })
+            .start()
+            .unwrap();
 
         // Advance the event loop for listener to start
         sleep(time::Duration::from_millis(10)).await;
@@ -521,17 +635,16 @@ mod tests {
         // Advance the event loop for events to be processed
         sleep(time::Duration::from_millis(10)).await;
 
-        server.shutdown();
+        if let Err(_) = timeout(time::Duration::from_secs(5), server.shutdown()).await {
+            panic!("did not shut down in 5 seconds");
+        }
 
         let mut v1 = Vec::new();
         let mut v2 = Vec::new();
 
         async fn capture(rx: &mut mpsc::Receiver<bytes::Bytes>, v: &mut Vec<bytes::Bytes>) {
-            println!("Here");
             let val = rx.recv().await;
-            println!("{:?}", val);
             v.push(val.unwrap());
-            println!("There");
         }
 
         if let Err(_) = timeout(time::Duration::from_secs(5), async {
@@ -549,5 +662,64 @@ mod tests {
         assert_eq!(v1[1], &expected);
         assert_eq!(v2[0], &expected);
         assert_eq!(v2[1], &expected);
+        assert!(server.is_shutdown());
+    }
+
+    #[tokio::test]
+    async fn test_listener_shutsdown_when_all_handlers_fail() {
+        let sample_request = b"POST / HTTP/1.1\r\nuser-agent: Valve/Steam HTTP Client 1.0 (570)\r\nContent-Type: application/json\r\nHost: 127.0.0.1:20080\r\nAccept: text/html,*/*;q=0.9\r\naccept-encoding: gzip,identity,*;q=0\r\naccept-charset: ISO-8859-1,utf-8,*;q=0.7\r\nContent-Length: 173\r\n\r\n{\n\t\"provider\": {\n\t\t\"name\": \"Dota 2\",\n\t\t\"appid\": 570,\n\t\t\"version\": 47,\n\t\t\"timestamp\": 1688514013\n\t},\n\t\"player\": {\n\n\t},\n\t\"draft\": {\n\n\t},\n\t\"auth\": {\n\t\t\"token\": \"hello1234\"\n\t}\n}";
+
+        let mut server = ServerBuilder::new("127.0.0.1:40080")
+            .register(move |_| async move { Err(anyhow::anyhow!("an error")) })
+            .register(move |_| async move { Err(anyhow::anyhow!("another error")) })
+            .start()
+            .unwrap();
+
+        // Advance the event loop for listener to start
+        sleep(time::Duration::from_millis(10)).await;
+
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let mut stream = TcpStream::connect("127.0.0.1:40080").await.unwrap();
+                let _ = stream.write_all(sample_request).await;
+                let _ = stream.shutdown().await;
+            }
+        });
+
+        // Process events, shut down handlers
+        sleep(time::Duration::from_millis(10)).await;
+
+        // One more event triggers listener shutdown
+        tokio::spawn(async move {
+            let mut stream = TcpStream::connect("127.0.0.1:40080").await.unwrap();
+            let _ = stream.write_all(sample_request).await;
+            let _ = stream.shutdown().await;
+        });
+
+        // Listener shuts down
+        sleep(time::Duration::from_millis(10)).await;
+
+        let _expected_handler_errors: Vec<GameStateIntegrationError> = vec![
+            GameStateIntegrationError::Handler {
+                source: anyhow::anyhow!("an error"),
+            },
+            GameStateIntegrationError::Handler {
+                source: anyhow::anyhow!("another error"),
+            },
+        ];
+        match timeout(time::Duration::from_secs(5), server.shutdown()).await {
+            Err(_) => {
+                panic!("did not finish in 5 seconds");
+            }
+            Ok(result) => {
+                assert!(matches!(
+                    result,
+                    Err(ServerError {
+                        listener_error: Some(GameStateIntegrationError::NoHandlersAvailable),
+                        handler_errors: Some(_expected_handler_errors)
+                    })
+                ));
+            }
+        }
     }
 }

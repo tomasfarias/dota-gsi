@@ -45,7 +45,7 @@ Here's a sample configuration file:
 }
 ```
 
-Note the URI used in the configuration file must be the same URI used when initializing a `Server`.
+Note the URI used in the configuration file must be the same URI used with a `ServerBuilder`.
 
 # Examples
 
@@ -77,7 +77,7 @@ where
 
 A handler must implement the `Handler` trait, which is automatically implemented for async functions like this one, so it can be directly used in the next step.
 
-In the `main` function, we run the `Server`. This includes first configuring the URI the `Server` will be listening on, and passing the handler function with `T` depending on inputs:
+In the `main` function, we build a new `Server` by first configuring the URI the `Server` will be listening on, and then passing the handler function with `T` depending on inputs:
 
 ```rust
 #[tokio::main]
@@ -86,15 +86,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = Args::parse();
 
-    let mut server = Server::new(&args.uri);
+    let mut builder = ServerBuilder::new(&args.uri);
 
     if args.raw {
-        server = server.register(echo_handler::<serde_json::Value>);
+        builder = builder.register(echo_handler::<serde_json::Value>);
     } else {
-        server = server.register(echo_handler::<GameState>);
+        builder = builder.register(echo_handler::<GameState>);
     }
 
-    server.run().await?;
+    let server = builder.start()?;
+    server.run_forever().await;
+
     Ok(())
 }
 ```

@@ -26,11 +26,13 @@ required-features = ["clap", "env_logger"]
 
 
 [dependencies]
+anyhow = "^1.0.100"
 async-trait = "^0.1.89"
 bytes = "1"
 chrono = "^0.4"
 clap = { version = "^4.5", features = ["derive"], optional = true }
 env_logger = { version = "^0.10", optional = true }
+futures = { version = "0.3" }
 httparse = "^1.10"
 log = "^0.4"
 serde = { version = "^1.0", features = ["derive"] }
