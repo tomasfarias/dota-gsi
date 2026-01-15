@@ -53,7 +53,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
 use tokio::task;
 
+#[cfg(feature = "models")]
 pub mod components;
+#[cfg(feature = "handlers")]
 pub mod handlers;
 
 /// The payload sent on every game state integration request is usually between 50-60kb.
