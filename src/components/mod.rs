@@ -183,8 +183,8 @@ impl GameState {
         self.heroes.as_ref()
     }
 
-    pub fn get_players(&self) -> Option<&GameHeroes> {
-        self.heroes.as_ref()
+    pub fn get_players(&self) -> Option<&GamePlayers> {
+        self.players.as_ref()
     }
 
     pub fn get_hero(&self) -> Option<&Hero> {
