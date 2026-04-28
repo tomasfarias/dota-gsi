@@ -15,12 +15,6 @@ pub struct BuildingInformation {
     max_health: u32,
 }
 
-pub enum BuildingClass {
-    Rax,
-    Ancient,
-    Tower,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Buildings {
     #[serde(flatten)]

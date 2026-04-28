@@ -122,7 +122,6 @@ where
 /// Manage lifecycle of a handler registered in a server
 pub(crate) struct HandlerRegistration {
     inner: Box<dyn Handler>,
-    is_shutdown: bool,
     notify: broadcast::Receiver<()>,
     events: broadcast::Receiver<bytes::Bytes>,
 }
@@ -138,7 +137,6 @@ impl HandlerRegistration {
     {
         Self {
             inner: Box::new(handler),
-            is_shutdown: false,
             notify,
             events,
         }
@@ -163,21 +161,13 @@ impl HandlerRegistration {
             }
         }
 
-        self.is_shutdown = true;
-
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn is_shutdown(&self) -> bool {
-        self.is_shutdown
     }
 }
 
 /// Manage lifecycle of a server's listening task
 pub(crate) struct Listener {
     uri: String,
-    is_shutdown: bool,
     notify: broadcast::Receiver<()>,
     send_events: broadcast::Sender<bytes::Bytes>,
 }
@@ -190,7 +180,6 @@ impl Listener {
     ) -> Self {
         Self {
             uri: uri.to_owned(),
-            is_shutdown: false,
             notify,
             send_events,
         }
@@ -206,7 +195,6 @@ impl Listener {
                     let (socket, _) = match accepted {
                         Ok(val) => val,
                         Err(e) => {
-                            self.is_shutdown = true;
                             return Err(GameStateIntegrationError::SocketRead(e));
                         }
                     };
@@ -242,14 +230,7 @@ impl Listener {
             }
         }
 
-        self.is_shutdown = true;
-
         Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn is_shutdown(&self) -> bool {
-        self.is_shutdown
     }
 }
 
