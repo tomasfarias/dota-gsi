@@ -18,8 +18,8 @@ pub enum WearablesError {
     EmptyWearablesSlot,
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
-pub struct WearableSlot(u8);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct WearableSlot(pub u8);
 
 impl fmt::Display for WearableSlot {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -62,10 +62,10 @@ impl Serialize for WearableSlot {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Wearable {
-    id: Option<u32>,
-    style: Option<u32>,
+    pub id: Option<u32>,
+    pub style: Option<u32>,
 }
 
 impl Wearable {
@@ -75,9 +75,9 @@ impl Wearable {
 }
 
 /// Wrapper for Wearable items.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Wearables {
-    inner: HashMap<WearableSlot, Wearable>,
+    pub inner: HashMap<WearableSlot, Wearable>,
 }
 
 impl Wearables {
@@ -152,7 +152,7 @@ where
     Err(D::Error::custom(WearablesError::ParseSlotError(s)))
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum GameWearables {
     Spectating(HashMap<Team, HashMap<PlayerID, Wearables>>),

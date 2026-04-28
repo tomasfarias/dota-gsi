@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{PlayerID, Team};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Hero {
     pub xpos: Option<i32>,
     pub ypos: Option<i32>,
@@ -57,7 +57,7 @@ impl fmt::Display for Hero {
     }
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum GameHeroes {
     Spectating(HashMap<Team, HashMap<PlayerID, Hero>>),

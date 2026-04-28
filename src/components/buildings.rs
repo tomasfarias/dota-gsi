@@ -9,16 +9,16 @@ pub enum BuildingsError {
     EmptyBuilding,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct BuildingInformation {
-    health: u32,
-    max_health: u32,
+    pub health: u32,
+    pub max_health: u32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Buildings {
     #[serde(flatten)]
-    inner: HashMap<String, BuildingInformation>,
+    pub inner: HashMap<String, BuildingInformation>,
 }
 
 impl Buildings {

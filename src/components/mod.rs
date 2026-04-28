@@ -21,13 +21,13 @@ use team::Team;
 use wearables::GameWearables;
 
 /// Represents Game State Integration authentication via an optional token
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Auth {
-    token: Option<String>,
+    pub token: Option<String>,
 }
 
 /// An enum of all possible GAMERULES states
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(from = "String")]
 pub enum DotaGameRulesState {
     Disconnected,
@@ -85,13 +85,13 @@ impl fmt::Display for DotaGameRulesState {
 }
 
 /// The Game State Integration provider, will be Dota
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Provider {
-    name: String,
+    pub name: String,
     #[serde(alias = "appid")]
-    app_id: u32,
-    version: u32,
-    timestamp: u32,
+    pub app_id: u32,
+    pub version: u32,
+    pub timestamp: u32,
 }
 
 impl fmt::Display for Provider {
@@ -101,21 +101,21 @@ impl fmt::Display for Provider {
 }
 
 /// Represents a Dota Game State Integration map
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Map {
-    name: String,
+    pub name: String,
     #[serde(alias = "matchid")]
-    match_id: String,
-    game_time: u32,
-    clock_time: i32,
-    daytime: bool,
-    nightstalker_night: bool,
-    game_state: DotaGameRulesState,
-    paused: bool,
-    win_team: Team,
+    pub match_id: String,
+    pub game_time: u32,
+    pub clock_time: i32,
+    pub daytime: bool,
+    pub nightstalker_night: bool,
+    pub game_state: DotaGameRulesState,
+    pub paused: bool,
+    pub win_team: Team,
     #[serde(alias = "customgamename")]
-    custom_game_name: String,
-    ward_purchase_cooldown: Option<u16>,
+    pub custom_game_name: String,
+    pub ward_purchase_cooldown: Option<u16>,
 }
 
 impl fmt::Display for Map {
@@ -148,23 +148,24 @@ where
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct GameState {
-    provider: Provider,
+    pub provider: Provider,
     #[serde(default, deserialize_with = "empty_map_as_none")]
-    buildings: Option<HashMap<Team, Buildings>>,
-    map: Option<Map>,
+    pub buildings: Option<HashMap<Team, Buildings>>,
+    pub map: Option<Map>,
     #[serde(alias = "player", default, deserialize_with = "empty_map_as_none")]
-    players: Option<GamePlayers>,
+    pub players: Option<GamePlayers>,
     #[serde(alias = "hero", default, deserialize_with = "empty_map_as_none")]
-    heroes: Option<GameHeroes>,
+    pub heroes: Option<GameHeroes>,
     #[serde(default, deserialize_with = "empty_map_as_none")]
-    abilities: Option<GameAbilities>,
+    pub abilities: Option<GameAbilities>,
     #[serde(default, deserialize_with = "empty_map_as_none")]
-    items: Option<GameItems>,
-    draft: Option<HashMap<Team, HashMap<PlayerID, Value>>>,
+    pub items: Option<GameItems>,
+    pub draft: Option<HashMap<Team, HashMap<PlayerID, Value>>>,
     #[serde(default, deserialize_with = "empty_map_as_none")]
-    wearables: Option<GameWearables>,
+    pub wearables: Option<GameWearables>,
+    pub auth: Option<Auth>,
 }
 
 impl GameState {

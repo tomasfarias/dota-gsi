@@ -12,15 +12,15 @@ pub enum AbilitiesError {
     ParseIDError(String),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Ability {
-    name: String,
-    level: u8,
-    can_cast: bool,
-    passive: bool,
-    ability_active: bool,
-    cooldown: u16,
-    ultimate: bool,
+    pub name: String,
+    pub level: u8,
+    pub can_cast: bool,
+    pub passive: bool,
+    pub ability_active: bool,
+    pub cooldown: u16,
+    pub ultimate: bool,
 }
 
 impl fmt::Display for Ability {
@@ -40,8 +40,8 @@ impl fmt::Display for Ability {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
-pub struct AbilityID(u8);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct AbilityID(pub u8);
 
 impl<'de> Deserialize<'de> for AbilityID {
     fn deserialize<D>(deserializer: D) -> Result<AbilityID, D::Error>
@@ -68,7 +68,7 @@ impl Serialize for AbilityID {
     }
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum GameAbilities {
     Spectating(HashMap<Team, HashMap<PlayerID, HashMap<AbilityID, Ability>>>),

@@ -20,7 +20,7 @@ pub enum ItemsError {
     UnknownItemContainer(String),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(from = "String")]
 pub enum Rune {
     Arcane,
@@ -69,7 +69,7 @@ impl fmt::Display for Rune {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Copy, Clone)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 #[serde(try_from = "String")]
 pub enum ItemContainer {
     Inventory(u8),
@@ -135,20 +135,20 @@ fn find_first_numeric(s: &str) -> Option<usize> {
     None
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Item {
-    name: String,
-    purchaser: i16,
-    item_level: Option<u16>,
-    contains_rune: Option<Rune>,
-    can_cast: Option<bool>,
-    cooldown: Option<u16>,
-    passive: bool,
-    charges: Option<u16>,
-    item_charges: Option<u16>,
+    pub name: String,
+    pub purchaser: i16,
+    pub item_level: Option<u16>,
+    pub contains_rune: Option<Rune>,
+    pub can_cast: Option<bool>,
+    pub cooldown: Option<u16>,
+    pub passive: bool,
+    pub charges: Option<u16>,
+    pub item_charges: Option<u16>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub enum ItemSlot {
     Empty { index: u8 },
     Full { index: u8, item: Item },
@@ -163,20 +163,20 @@ impl fmt::Display for ItemSlot {
     }
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum GameItems {
     Playing(Items),
     Spectating(HashMap<Team, HashMap<PlayerID, Items>>),
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Items {
-    inventory: Vec<ItemSlot>,
-    stash: Vec<ItemSlot>,
-    teleport: ItemSlot,
-    neutrals: Vec<ItemSlot>,
-    preserved_neutrals: Vec<ItemSlot>,
+    pub inventory: Vec<ItemSlot>,
+    pub stash: Vec<ItemSlot>,
+    pub teleport: ItemSlot,
+    pub neutrals: Vec<ItemSlot>,
+    pub preserved_neutrals: Vec<ItemSlot>,
 }
 
 impl Items {

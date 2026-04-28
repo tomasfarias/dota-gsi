@@ -14,7 +14,7 @@ pub enum PlayersError {
     EmptyPlayer,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(from = "String")]
 pub enum PlayerActivity {
     Menu,
@@ -42,8 +42,8 @@ impl fmt::Display for PlayerActivity {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq)]
-pub struct PlayerID(u8);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct PlayerID(pub u8);
 
 impl From<u8> for PlayerID {
     fn from(n: u8) -> Self {
@@ -77,13 +77,13 @@ impl Serialize for PlayerID {
     }
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Debug, Clone, PartialEq)]
 pub struct Player {
     pub id: String,
     pub information: PlayerInformation,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PlayerInformation {
     pub steamid: String,
     pub name: String,
@@ -136,7 +136,7 @@ impl<'de> Deserialize<'de> for Player {
     }
 }
 
-#[derive(Deserialize, Debug, Serialize)]
+#[derive(Deserialize, Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum GamePlayers {
     Spectating(HashMap<Team, HashMap<PlayerID, PlayerInformation>>),
