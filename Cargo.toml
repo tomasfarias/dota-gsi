@@ -22,6 +22,10 @@ required-features = ["handlers"]
 name = "recall"
 required-features = ["models"]
 
+[[example]]
+name = "killfeed"
+required-features = ["handlers", "diff"]
+
 [dependencies]
 anyhow = "^1.0.100"
 async-trait = "^0.1.89"
