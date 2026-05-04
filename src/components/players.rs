@@ -6,6 +6,11 @@ use thiserror;
 
 use super::Team;
 
+#[cfg(feature = "diff")]
+use crate::diff::Diffable;
+#[cfg(feature = "diff")]
+use crate::event::{GameEvent, Player as PlayerEvent};
+
 #[derive(thiserror::Error, Debug)]
 pub enum PlayersError {
     #[error("failed to parse player ID number in `{0}`")]
@@ -109,6 +114,30 @@ pub struct PlayerInformation {
     pub xpm: u32,
 }
 
+#[cfg(feature = "diff")]
+impl Diffable for PlayerInformation {
+    fn diff<'a>(&'a self, new: &'a Self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        if self.kills < new.kills {
+            events.push(GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                kills: new.kills,
+                streak: new.kill_streak,
+            }));
+        }
+
+        if self.deaths < new.deaths {
+            events.push(GameEvent::PlayerEvent(PlayerEvent::Died(new.deaths)));
+        }
+
+        if self.assists < new.assists {
+            events.push(GameEvent::PlayerEvent(PlayerEvent::Assisted(new.assists)));
+        }
+
+        events
+    }
+}
+
 impl fmt::Display for Player {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.information.name)
@@ -143,8 +172,39 @@ pub enum GamePlayers {
     Playing(PlayerInformation),
 }
 
+#[cfg(feature = "diff")]
+impl Diffable for GamePlayers {
+    fn diff<'a>(&'a self, new: &'a Self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        match (self, new) {
+            (GamePlayers::Spectating(current), GamePlayers::Spectating(new)) => {
+                for (team, players) in current.iter() {
+                    let Some(team_new) = new.get(team) else {
+                        continue;
+                    };
+
+                    for (player_id, info) in players.iter() {
+                        let Some(info_new) = team_new.get(player_id) else {
+                            continue;
+                        };
+
+                        events.extend(info.diff(info_new));
+                    }
+                }
+            }
+            (GamePlayers::Playing(info), GamePlayers::Playing(info_new)) => {
+                events.extend(info.diff(info_new));
+            }
+            _ => panic!(""),
+        }
+
+        events
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -545,5 +605,187 @@ mod tests {
             PlayerActivity::from("playing".to_string()),
             PlayerActivity::Playing
         ));
+    }
+
+    pub(crate) fn make_player_info(
+        kills: u16,
+        deaths: u16,
+        assists: u16,
+        streak: u16,
+    ) -> PlayerInformation {
+        PlayerInformation {
+            steamid: "76561198000000000".to_string(),
+            name: "TestPlayer".to_string(),
+            activity: PlayerActivity::Playing,
+            kills,
+            deaths,
+            assists,
+            last_hits: 0,
+            denies: 0,
+            kill_streak: streak,
+            kill_list: HashMap::new(),
+            commands_issued: 0,
+            team_name: Team::Radiant,
+            gold: 600,
+            gold_reliable: 0,
+            gold_unreliable: 600,
+            gold_from_hero_kills: 0,
+            gold_from_creep_kills: 0,
+            gold_from_income: 0,
+            gold_from_shared: 0,
+            net_worth: None,
+            gpm: 0,
+            xpm: 0,
+        }
+    }
+
+    #[test]
+    fn test_player_info_no_change() {
+        let info = make_player_info(0, 0, 0, 0);
+        let events = info.diff(&info.clone());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_player_info_secured_kill() {
+        let prev = make_player_info(2, 0, 0, 2);
+        let cur = make_player_info(3, 0, 0, 3);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                kills: 3,
+                streak: 3
+            })]
+        );
+    }
+
+    #[test]
+    fn test_player_info_died() {
+        let prev = make_player_info(0, 1, 0, 0);
+        let cur = make_player_info(0, 2, 0, 0);
+        let events = prev.diff(&cur);
+        assert_eq!(events, vec![GameEvent::PlayerEvent(PlayerEvent::Died(2))]);
+    }
+
+    #[test]
+    fn test_player_info_assisted() {
+        let prev = make_player_info(0, 0, 0, 0);
+        let cur = make_player_info(0, 0, 1, 0);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::PlayerEvent(PlayerEvent::Assisted(1))]
+        );
+    }
+
+    #[test]
+    fn test_player_info_kill_and_death_same_tick() {
+        let prev = make_player_info(2, 1, 0, 2);
+        let cur = make_player_info(3, 2, 0, 1);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                    kills: 3,
+                    streak: 1
+                }),
+                GameEvent::PlayerEvent(PlayerEvent::Died(2)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_player_info_multi_kill_single_tick() {
+        let prev = make_player_info(0, 0, 0, 0);
+        let cur = make_player_info(3, 0, 0, 3);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                kills: 3,
+                streak: 3
+            })]
+        );
+    }
+    #[test]
+    fn test_game_players_playing_kill() {
+        let prev = GamePlayers::Playing(make_player_info(0, 0, 0, 0));
+        let cur = GamePlayers::Playing(make_player_info(1, 0, 0, 1));
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                kills: 1,
+                streak: 1
+            })]
+        );
+    }
+
+    #[test]
+    fn test_game_players_playing_no_change() {
+        let info = make_player_info(5, 2, 3, 1);
+        let prev = GamePlayers::Playing(info.clone());
+        let cur = GamePlayers::Playing(info);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_players_spectating_multiple_deaths() {
+        let mut radiant_prev = HashMap::new();
+        radiant_prev.insert(PlayerID(0), make_player_info(0, 0, 0, 0));
+        radiant_prev.insert(PlayerID(1), make_player_info(0, 0, 0, 0));
+
+        let mut radiant_cur = HashMap::new();
+        radiant_cur.insert(PlayerID(0), make_player_info(0, 1, 0, 0));
+        radiant_cur.insert(PlayerID(1), make_player_info(0, 1, 0, 0));
+
+        let mut prev_map = HashMap::new();
+        prev_map.insert(Team::Radiant, radiant_prev);
+        let mut cur_map = HashMap::new();
+        cur_map.insert(Team::Radiant, radiant_cur);
+
+        let prev = GamePlayers::Spectating(prev_map);
+        let cur = GamePlayers::Spectating(cur_map);
+        let events = prev.diff(&cur);
+
+        // Both players died — should have 2 death events
+        assert_eq!(events.len(), 2);
+        assert!(
+            events
+                .iter()
+                .all(|e| matches!(e, GameEvent::PlayerEvent(PlayerEvent::Died(1))))
+        );
+    }
+
+    #[test]
+    fn test_game_players_spectating_missing_player_no_panic() {
+        let mut radiant_prev = HashMap::new();
+        radiant_prev.insert(PlayerID(0), make_player_info(0, 0, 0, 0));
+        radiant_prev.insert(PlayerID(1), make_player_info(0, 0, 0, 0));
+
+        // Player 1 gone in new state
+        let mut radiant_cur = HashMap::new();
+        radiant_cur.insert(PlayerID(0), make_player_info(0, 0, 0, 0));
+
+        let mut prev_map = HashMap::new();
+        prev_map.insert(Team::Radiant, radiant_prev);
+        let mut cur_map = HashMap::new();
+        cur_map.insert(Team::Radiant, radiant_cur);
+
+        let prev = GamePlayers::Spectating(prev_map);
+        let cur = GamePlayers::Spectating(cur_map);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_game_players_mixed_mode_panics() {
+        let playing = GamePlayers::Playing(make_player_info(0, 0, 0, 0));
+        let spectating = GamePlayers::Spectating(HashMap::new());
+        playing.diff(&spectating);
     }
 }

@@ -20,6 +20,11 @@ use players::{GamePlayers, PlayerID};
 use team::Team;
 use wearables::GameWearables;
 
+#[cfg(feature = "diff")]
+use crate::diff::Diffable;
+#[cfg(feature = "diff")]
+use crate::event::{GameEvent, Map as MapEvent};
+
 /// Represents Game State Integration authentication via an optional token
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Auth {
@@ -148,6 +153,22 @@ where
     }
 }
 
+#[cfg(feature = "diff")]
+impl Diffable for Map {
+    fn diff<'a>(&'a self, new: &'a Self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        match (self.daytime, new.daytime) {
+            (true, false) => events.push(GameEvent::MapEvent(MapEvent::StartedNight {
+                nightstalker: new.nightstalker_night,
+            })),
+            (false, true) => events.push(GameEvent::MapEvent(MapEvent::StartedDay)),
+            _ => {}
+        }
+
+        events
+    }
+}
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct GameState {
     pub provider: Provider,
@@ -272,9 +293,35 @@ impl fmt::Display for GameState {
     }
 }
 
+#[cfg(feature = "diff")]
+impl Diffable for GameState {
+    fn diff<'a>(&'a self, new: &'a Self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        if let (Some(dota_map), Some(dota_map_new)) = (self.map.as_ref(), new.map.as_ref()) {
+            events.extend(dota_map.diff(dota_map_new));
+        }
+
+        if let (Some(abilities), Some(abilities_new)) =
+            (self.abilities.as_ref(), new.abilities.as_ref())
+        {
+            events.extend(abilities.diff(abilities_new));
+        }
+
+        if let (Some(players), Some(players_new)) = (self.players.as_ref(), new.players.as_ref()) {
+            events.extend(players.diff(players_new));
+        }
+
+        events
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::{Ability as AbilityEvent, Player as PlayerEvent};
+    use abilities::{AbilityID, tests::make_ability};
+    use players::tests::make_player_info;
 
     #[test]
     fn test_idle_game_state_deserialize() {
@@ -721,5 +768,203 @@ mod tests {
         assert_eq!(map.nightstalker_night, false);
         assert!(matches!(map.game_state, DotaGameRulesState::InProgress));
         assert_eq!(map.paused, false);
+    }
+
+    fn make_map(daytime: bool, nightstalker_night: bool) -> Map {
+        Map {
+            name: "start".to_string(),
+            match_id: "12345".to_string(),
+            game_time: 600,
+            clock_time: 600,
+            daytime,
+            nightstalker_night,
+            game_state: DotaGameRulesState::InProgress,
+            paused: false,
+            win_team: Team::None,
+            custom_game_name: "".to_string(),
+            ward_purchase_cooldown: None,
+        }
+    }
+
+    fn make_game_state(
+        map: Option<Map>,
+        players: Option<GamePlayers>,
+        abilities: Option<GameAbilities>,
+    ) -> GameState {
+        GameState {
+            provider: Provider {
+                name: "Dota 2".to_string(),
+                app_id: 570,
+                version: 47,
+                timestamp: 0,
+            },
+            buildings: None,
+            map,
+            players,
+            heroes: None,
+            abilities,
+            items: None,
+            draft: None,
+            wearables: None,
+            auth: None,
+        }
+    }
+
+    #[test]
+    fn test_map_no_change_day() {
+        let map = make_map(true, false);
+        let events = map.diff(&map.clone());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_map_no_change_night() {
+        let map = make_map(false, false);
+        let events = map.diff(&map.clone());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_map_started_night() {
+        let prev = make_map(true, false);
+        let cur = make_map(false, false);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::MapEvent(MapEvent::StartedNight {
+                nightstalker: false
+            })]
+        );
+    }
+
+    #[test]
+    fn test_map_started_night_nightstalker() {
+        let prev = make_map(true, false);
+        let cur = make_map(false, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::MapEvent(MapEvent::StartedNight {
+                nightstalker: true
+            })]
+        );
+    }
+
+    #[test]
+    fn test_map_started_day() {
+        let prev = make_map(false, false);
+        let cur = make_map(true, false);
+        let events = prev.diff(&cur);
+        assert_eq!(events, vec![GameEvent::MapEvent(MapEvent::StartedDay)]);
+    }
+
+    #[test]
+    fn test_game_state_all_none_no_events() {
+        let prev = make_game_state(None, None, None);
+        let cur = make_game_state(None, None, None);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_state_map_day_to_night() {
+        let prev = make_game_state(Some(make_map(true, false)), None, None);
+        let cur = make_game_state(Some(make_map(false, false)), None, None);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::MapEvent(MapEvent::StartedNight {
+                nightstalker: false
+            })]
+        );
+    }
+
+    #[test]
+    fn test_game_state_none_to_some_map_no_events() {
+        let prev = make_game_state(None, None, None);
+        let cur = make_game_state(Some(make_map(true, false)), None, None);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_state_some_to_none_map_no_events() {
+        let prev = make_game_state(Some(make_map(true, false)), None, None);
+        let cur = make_game_state(None, None, None);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_state_combined_events() {
+        let prev = make_game_state(
+            Some(make_map(true, false)),
+            Some(GamePlayers::Playing(make_player_info(0, 0, 0, 0))),
+            None,
+        );
+        let cur = make_game_state(
+            Some(make_map(false, false)),
+            Some(GamePlayers::Playing(make_player_info(1, 0, 0, 1))),
+            None,
+        );
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::MapEvent(MapEvent::StartedNight {
+                    nightstalker: false
+                }),
+                GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                    kills: 1,
+                    streak: 1
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_game_state_player_and_ability_events() {
+        let mut prev_abilities = HashMap::new();
+        prev_abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+
+        let mut cur_abilities = HashMap::new();
+        cur_abilities.insert(AbilityID(0), make_ability(2, false, 10, true));
+
+        let prev = make_game_state(
+            None,
+            Some(GamePlayers::Playing(make_player_info(0, 0, 0, 0))),
+            Some(GameAbilities::Playing(prev_abilities)),
+        );
+        let cur = make_game_state(
+            None,
+            Some(GamePlayers::Playing(make_player_info(0, 1, 0, 0))),
+            Some(GameAbilities::Playing(cur_abilities)),
+        );
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2)),
+                GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(10)),
+                GameEvent::PlayerEvent(PlayerEvent::Died(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_game_state_identical_no_events() {
+        let abilities = {
+            let mut m = HashMap::new();
+            m.insert(AbilityID(0), make_ability(3, true, 0, true));
+            m
+        };
+
+        let state = make_game_state(
+            Some(make_map(true, false)),
+            Some(GamePlayers::Playing(make_player_info(5, 2, 3, 1))),
+            Some(GameAbilities::Playing(abilities.clone())),
+        );
+        let events = state.diff(&state.clone());
+        assert!(events.is_empty());
     }
 }

@@ -6,6 +6,11 @@ use thiserror;
 
 use super::{PlayerID, Team};
 
+#[cfg(feature = "diff")]
+use crate::diff::Diffable;
+#[cfg(feature = "diff")]
+use crate::event::{Ability as AbilityEvent, GameEvent};
+
 #[derive(thiserror::Error, Debug)]
 pub enum AbilitiesError {
     #[error("failed to parse ability ID number in `{0}`")]
@@ -37,6 +42,33 @@ impl fmt::Display for Ability {
         }
 
         write!(f, "{} level {}, {}", self.name, self.level, cd_status)
+    }
+}
+
+#[cfg(feature = "diff")]
+impl Diffable for Ability {
+    fn diff<'a>(&'a self, new: &'a Self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        if self.level < new.level {
+            events.push(GameEvent::AbilityEvent(AbilityEvent::LevelledUp(new.level)));
+        }
+
+        match (self.can_cast, new.can_cast) {
+            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(
+                new.cooldown,
+            ))),
+            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown)),
+            _ => {}
+        }
+
+        match (self.ability_active, new.ability_active) {
+            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::Deactivated)),
+            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::Activated)),
+            _ => {}
+        }
+
+        events
     }
 }
 
@@ -75,8 +107,50 @@ pub enum GameAbilities {
     Playing(HashMap<AbilityID, Ability>),
 }
 
+#[cfg(feature = "diff")]
+impl Diffable for GameAbilities {
+    fn diff<'a>(&'a self, new: &'a Self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        match (self, new) {
+            (GameAbilities::Spectating(current), GameAbilities::Spectating(new)) => {
+                for (team, players) in current.iter() {
+                    let Some(team_new) = new.get(team) else {
+                        continue;
+                    };
+
+                    for (player_id, abilities) in players.iter() {
+                        let Some(abilities_new) = team_new.get(player_id) else {
+                            continue;
+                        };
+
+                        for (ability_id, ability) in abilities.iter() {
+                            let Some(ability_new) = abilities_new.get(ability_id) else {
+                                continue;
+                            };
+
+                            events.extend(ability.diff(ability_new));
+                        }
+                    }
+                }
+            }
+            (GameAbilities::Playing(abilities), GameAbilities::Playing(abilities_new)) => {
+                for (ability_id, ability) in abilities.iter() {
+                    let Some(ability_new) = abilities_new.get(ability_id) else {
+                        continue;
+                    };
+                    events.extend(ability.diff(ability_new));
+                }
+            }
+            (_, _) => panic!("cannot mix playing and spectating state"),
+        }
+
+        events
+    }
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -152,5 +226,232 @@ mod tests {
                 .iter()
                 .any(|a| a.name == "marci_unleash".to_owned())
         );
+    }
+
+    pub(crate) fn make_ability(level: u8, can_cast: bool, cooldown: u16, active: bool) -> Ability {
+        Ability {
+            name: "test_ability".to_string(),
+            level,
+            can_cast,
+            passive: false,
+            ability_active: active,
+            cooldown,
+            ultimate: false,
+        }
+    }
+
+    #[test]
+    fn test_ability_no_change() {
+        let ability = make_ability(1, true, 0, true);
+        let events = ability.diff(&ability.clone());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_ability_level_up() {
+        let prev = make_ability(1, true, 0, true);
+        let cur = make_ability(2, true, 0, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+        );
+    }
+
+    #[test]
+    fn test_ability_level_up_multiple() {
+        let prev = make_ability(1, true, 0, true);
+        let cur = make_ability(4, true, 0, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(4))]
+        );
+    }
+
+    #[test]
+    fn test_ability_went_on_cooldown() {
+        let prev = make_ability(1, true, 0, true);
+        let cur = make_ability(1, false, 12, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(12))]
+        );
+    }
+
+    #[test]
+    fn test_ability_went_off_cooldown() {
+        let prev = make_ability(1, false, 5, true);
+        let cur = make_ability(1, true, 0, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown)]
+        );
+    }
+
+    #[test]
+    fn test_ability_still_on_cooldown_no_event() {
+        let prev = make_ability(1, false, 10, true);
+        let cur = make_ability(1, false, 5, true);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_ability_activated() {
+        let prev = make_ability(1, true, 0, false);
+        let cur = make_ability(1, true, 0, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::Activated)]
+        );
+    }
+
+    #[test]
+    fn test_ability_deactivated() {
+        let prev = make_ability(1, true, 0, true);
+        let cur = make_ability(1, true, 0, false);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::Deactivated)]
+        );
+    }
+
+    #[test]
+    fn test_ability_multiple_events_simultaneous() {
+        let prev = make_ability(1, true, 0, true);
+        let cur = make_ability(2, false, 8, true);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![
+                GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2)),
+                GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(8)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_game_abilities_playing_no_change() {
+        let mut abilities = HashMap::new();
+        abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+        abilities.insert(AbilityID(1), make_ability(2, false, 5, true));
+
+        let prev = GameAbilities::Playing(abilities.clone());
+        let cur = GameAbilities::Playing(abilities);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_abilities_playing_one_levels_up() {
+        let mut prev_abilities = HashMap::new();
+        prev_abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+        prev_abilities.insert(AbilityID(1), make_ability(2, true, 0, true));
+
+        let mut cur_abilities = HashMap::new();
+        cur_abilities.insert(AbilityID(0), make_ability(2, true, 0, true));
+        cur_abilities.insert(AbilityID(1), make_ability(2, true, 0, true));
+
+        let prev = GameAbilities::Playing(prev_abilities);
+        let cur = GameAbilities::Playing(cur_abilities);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+        );
+    }
+
+    #[test]
+    fn test_game_abilities_playing_new_ability_ignored() {
+        let mut prev_abilities = HashMap::new();
+        prev_abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+
+        let mut cur_abilities = HashMap::new();
+        cur_abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+        cur_abilities.insert(AbilityID(1), make_ability(1, true, 0, true));
+
+        let prev = GameAbilities::Playing(prev_abilities);
+        let cur = GameAbilities::Playing(cur_abilities);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_abilities_spectating_one_player_levels_up() {
+        let mut radiant_prev = HashMap::new();
+        let mut player0_abilities = HashMap::new();
+        player0_abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+        radiant_prev.insert(PlayerID(0), player0_abilities);
+
+        let mut radiant_cur = HashMap::new();
+        let mut player0_abilities_new = HashMap::new();
+        player0_abilities_new.insert(AbilityID(0), make_ability(2, true, 0, true));
+        radiant_cur.insert(PlayerID(0), player0_abilities_new);
+
+        let mut prev_map = HashMap::new();
+        prev_map.insert(Team::Radiant, radiant_prev);
+        let mut cur_map = HashMap::new();
+        cur_map.insert(Team::Radiant, radiant_cur);
+
+        let prev = GameAbilities::Spectating(prev_map);
+        let cur = GameAbilities::Spectating(cur_map);
+        let events = prev.diff(&cur);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+        );
+    }
+
+    #[test]
+    fn test_game_abilities_spectating_missing_team_no_panic() {
+        let mut prev_map = HashMap::new();
+        let mut radiant = HashMap::new();
+        let mut abilities_map = HashMap::new();
+        abilities_map.insert(AbilityID(0), make_ability(1, true, 0, true));
+        radiant.insert(PlayerID(0), abilities_map);
+        prev_map.insert(Team::Radiant, radiant);
+
+        // New state has no Radiant team
+        let cur_map = HashMap::new();
+
+        let prev = GameAbilities::Spectating(prev_map);
+        let cur = GameAbilities::Spectating(cur_map);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_game_abilities_spectating_missing_player_no_panic() {
+        let mut radiant_prev = HashMap::new();
+        let mut p0_abilities = HashMap::new();
+        p0_abilities.insert(AbilityID(0), make_ability(1, true, 0, true));
+        radiant_prev.insert(PlayerID(0), p0_abilities);
+
+        // New state has the team but not the player
+        let radiant_cur: HashMap<PlayerID, HashMap<AbilityID, Ability>> = HashMap::new();
+
+        let mut prev_map = HashMap::new();
+        prev_map.insert(Team::Radiant, radiant_prev);
+        let mut cur_map = HashMap::new();
+        cur_map.insert(Team::Radiant, radiant_cur);
+
+        let prev = GameAbilities::Spectating(prev_map);
+        let cur = GameAbilities::Spectating(cur_map);
+        let events = prev.diff(&cur);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "cannot mix playing and spectating state")]
+    fn test_game_abilities_mixed_mode_panics() {
+        let abilities = HashMap::new();
+        let playing = GameAbilities::Playing(abilities);
+        let spectating = GameAbilities::Spectating(HashMap::new());
+        playing.diff(&spectating);
     }
 }
