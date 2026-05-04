@@ -89,6 +89,8 @@ pub enum GameStateIntegrationError {
     MissingContentLengthHeader,
     #[error("invalid request received")]
     InvalidRequest(#[from] httparse::Error),
+    #[error("unexpected EOF")]
+    UnexpectedEOF,
     #[error("server has already shutdown")]
     ServerShutdown,
     #[error("handler failed when handling event")]
@@ -529,10 +531,17 @@ pub async fn process(mut socket: TcpStream) -> Result<bytes::Bytes, GameStateInt
         break;
     }
 
-    if buf.len() <= request_length + content_length {
-        buf.reserve(request_length + content_length);
+    // Call 'reserve' for additional capacity if necessary
+    let remaining = (request_length + content_length).saturating_sub(buf.len());
+    buf.reserve(remaining);
+
+    while buf.len() < request_length + content_length {
         match socket.read_buf(&mut buf).await {
-            Ok(n) => n,
+            Ok(0) => {
+                log::error!("eof before receiving full body");
+                return Err(GameStateIntegrationError::UnexpectedEOF);
+            }
+            Ok(_) => {}
             Err(e) => {
                 log::error!("failed to read body from socket: {}", e);
                 return Err(GameStateIntegrationError::from(e));
