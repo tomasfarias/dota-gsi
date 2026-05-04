@@ -121,17 +121,24 @@ impl Diffable for PlayerInformation {
 
         if self.kills < new.kills {
             events.push(GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: self.name.clone(),
                 kills: new.kills,
                 streak: new.kill_streak,
             }));
         }
 
         if self.deaths < new.deaths {
-            events.push(GameEvent::PlayerEvent(PlayerEvent::Died(new.deaths)));
+            events.push(GameEvent::PlayerEvent(PlayerEvent::Died {
+                name: self.name.clone(),
+                deaths: new.deaths,
+            }));
         }
 
         if self.assists < new.assists {
-            events.push(GameEvent::PlayerEvent(PlayerEvent::Assisted(new.assists)));
+            events.push(GameEvent::PlayerEvent(PlayerEvent::Assisted {
+                name: self.name.clone(),
+                assists: new.assists,
+            }));
         }
 
         events
@@ -654,6 +661,7 @@ pub(crate) mod tests {
         assert_eq!(
             events,
             vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: "TestPlayer".to_owned(),
                 kills: 3,
                 streak: 3
             })]
@@ -665,7 +673,13 @@ pub(crate) mod tests {
         let prev = make_player_info(0, 1, 0, 0);
         let cur = make_player_info(0, 2, 0, 0);
         let events = prev.diff(&cur);
-        assert_eq!(events, vec![GameEvent::PlayerEvent(PlayerEvent::Died(2))]);
+        assert_eq!(
+            events,
+            vec![GameEvent::PlayerEvent(PlayerEvent::Died {
+                name: "TestPlayer".to_owned(),
+                deaths: 2
+            })]
+        );
     }
 
     #[test]
@@ -675,7 +689,10 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::PlayerEvent(PlayerEvent::Assisted(1))]
+            vec![GameEvent::PlayerEvent(PlayerEvent::Assisted {
+                name: "TestPlayer".to_owned(),
+                assists: 1
+            })]
         );
     }
 
@@ -688,10 +705,14 @@ pub(crate) mod tests {
             events,
             vec![
                 GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                    name: "TestPlayer".to_owned(),
                     kills: 3,
                     streak: 1
                 }),
-                GameEvent::PlayerEvent(PlayerEvent::Died(2)),
+                GameEvent::PlayerEvent(PlayerEvent::Died {
+                    name: "TestPlayer".to_owned(),
+                    deaths: 2
+                }),
             ]
         );
     }
@@ -704,6 +725,7 @@ pub(crate) mod tests {
         assert_eq!(
             events,
             vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: "TestPlayer".to_owned(),
                 kills: 3,
                 streak: 3
             })]
@@ -717,6 +739,7 @@ pub(crate) mod tests {
         assert_eq!(
             events,
             vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: "TestPlayer".to_owned(),
                 kills: 1,
                 streak: 1
             })]
@@ -753,11 +776,10 @@ pub(crate) mod tests {
 
         // Both players died — should have 2 death events
         assert_eq!(events.len(), 2);
-        assert!(
-            events
-                .iter()
-                .all(|e| matches!(e, GameEvent::PlayerEvent(PlayerEvent::Died(1))))
-        );
+        assert!(events.iter().all(|e| matches!(
+            e,
+            GameEvent::PlayerEvent(PlayerEvent::Died { name: _, deaths: 1 })
+        )));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-/// Provides a handler for [`crate::components::GameState`] diffs
+/// Provides a handler for [`GameState`] diffs
 use async_trait::async_trait;
 
 use crate::components::GameState;
@@ -6,15 +6,19 @@ use crate::diff::Diffable;
 use crate::event::GameEvent;
 use crate::{HandlerResult, MutHandler};
 
+/// Handler that sends events to a consumer
+///
+/// The first [`GameState`] will not generate any events as there is no previous state
+/// to diff against. Events will be sent to the consumer starting on the second tick.
 pub struct DiffHandler<F> {
-    state: GameState,
+    state: Option<GameState>,
     consumer: F,
 }
 
 impl<F> DiffHandler<F> {
-    pub fn new(initial_state: GameState, consumer: F) -> Self {
+    pub fn new(consumer: F) -> Self {
         Self {
-            state: initial_state,
+            state: None,
             consumer,
         }
     }
@@ -28,11 +32,14 @@ where
 {
     async fn handle(&mut self, event: bytes::Bytes) -> HandlerResult {
         let current: GameState = serde_json::from_slice(&event)?;
-        let events = self.state.diff(&current);
 
-        (self.consumer)(events).await?;
+        if let Some(state) = self.state.as_ref() {
+            let events = state.diff(&current);
 
-        self.state = current;
+            (self.consumer)(events).await?;
+        }
+
+        self.state = Some(current);
         Ok(())
     }
 }
@@ -155,7 +162,7 @@ mod tests {
 
         let initial = make_initial_game_state(true, 0, 0);
         let mut handler = DiffHandler {
-            state: initial,
+            state: Some(initial),
             consumer: move |events: Vec<GameEvent>| {
                 let captured = captured_clone.clone();
                 async move {
@@ -189,7 +196,7 @@ mod tests {
 
         let initial = make_initial_game_state(true, 0, 0);
         let mut handler = DiffHandler {
-            state: initial,
+            state: Some(initial),
             consumer: move |events: Vec<GameEvent>| {
                 let captured = captured_clone.clone();
                 async move {
@@ -211,6 +218,7 @@ mod tests {
         assert_eq!(
             results[0],
             vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: "TestPlayer".to_owned(),
                 kills: 1,
                 streak: 0
             })]
@@ -224,7 +232,7 @@ mod tests {
 
         let initial = make_initial_game_state(true, 0, 0);
         let mut handler = DiffHandler {
-            state: initial,
+            state: Some(initial),
             consumer: move |events: Vec<GameEvent>| {
                 let captured = captured_clone.clone();
                 async move {
@@ -253,7 +261,7 @@ mod tests {
 
         let initial = make_initial_game_state(true, 0, 0);
         let mut handler = DiffHandler {
-            state: initial,
+            state: Some(initial),
             consumer: move |events: Vec<GameEvent>| {
                 let captured = captured_clone.clone();
                 async move {
@@ -284,6 +292,7 @@ mod tests {
         assert_eq!(
             results[0],
             vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: "TestPlayer".to_owned(),
                 kills: 1,
                 streak: 0
             })]
@@ -293,6 +302,7 @@ mod tests {
         assert_eq!(
             results[1],
             vec![GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                name: "TestPlayer".to_owned(),
                 kills: 2,
                 streak: 0
             })]
@@ -302,7 +312,7 @@ mod tests {
     #[tokio::test]
     async fn test_diff_handler_invalid_json_returns_error() {
         let mut handler = DiffHandler {
-            state: make_initial_game_state(true, 0, 0),
+            state: Some(make_initial_game_state(true, 0, 0)),
             consumer: |_events: Vec<GameEvent>| async move { Ok(()) },
         };
 

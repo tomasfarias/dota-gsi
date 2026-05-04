@@ -36,9 +36,13 @@ pub enum Player {
     /// A player secured one or more kills
     ///
     /// Includes the current kill stream.
-    SecuredKill { kills: u16, streak: u16 },
+    SecuredKill {
+        name: String,
+        kills: u16,
+        streak: u16,
+    },
     /// A player died
-    Died(u16),
+    Died { name: String, deaths: u16 },
     /// A player got an assist
-    Assisted(u16),
+    Assisted { name: String, assists: u16 },
 }

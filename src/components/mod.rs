@@ -915,6 +915,7 @@ mod tests {
                     nightstalker: false
                 }),
                 GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                    name: "TestPlayer".to_owned(),
                     kills: 1,
                     streak: 1
                 }),
@@ -946,7 +947,10 @@ mod tests {
             vec![
                 GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2)),
                 GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(10)),
-                GameEvent::PlayerEvent(PlayerEvent::Died(1)),
+                GameEvent::PlayerEvent(PlayerEvent::Died {
+                    name: "TestPlayer".to_owned(),
+                    deaths: 1
+                }),
             ]
         );
     }
