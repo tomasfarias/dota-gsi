@@ -1,5 +1,8 @@
 use serde::de::DeserializeOwned;
 
+#[cfg(feature = "diff")]
+pub mod diff;
+
 /// Handler to echo back game state integration events.
 pub async fn echo_handler<T>(event: bytes::Bytes) -> Result<(), serde_json::Error>
 where

@@ -110,6 +110,12 @@ pub trait Handler: Send + Sync + 'static {
     async fn handle(&self, event: bytes::Bytes) -> HandlerResult;
 }
 
+/// Mutable version of the [`Handler`] trait
+#[async_trait]
+pub trait MutHandler: Send + Sync + 'static {
+    async fn handle(&mut self, event: bytes::Bytes) -> HandlerResult;
+}
+
 #[async_trait]
 impl<F, Fut, E> Handler for F
 where
@@ -138,6 +144,52 @@ impl HandlerRegistration {
     ) -> Self
     where
         H: Handler,
+    {
+        Self {
+            inner: Box::new(handler),
+            notify,
+            events,
+        }
+    }
+
+    pub(crate) async fn run(mut self) -> Result<(), GameStateIntegrationError> {
+        loop {
+            tokio::select! {
+                received = self.events.recv() => {
+                    match received {
+                        Ok(event) => {
+                            if let Err(e) = self.inner.handle(event).await {
+                                return Err(GameStateIntegrationError::Handler{source: e});
+                            };
+                        },
+                        Err(_) => {break;}
+                    }
+                }
+                _ = self.notify.recv() => {
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Manage lifecycle of a handler registered in a server
+pub(crate) struct MutHandlerRegistration {
+    inner: Box<dyn MutHandler>,
+    notify: broadcast::Receiver<()>,
+    events: broadcast::Receiver<bytes::Bytes>,
+}
+
+impl MutHandlerRegistration {
+    pub(crate) fn new<H>(
+        handler: H,
+        notify: broadcast::Receiver<()>,
+        events: broadcast::Receiver<bytes::Bytes>,
+    ) -> Self
+    where
+        H: MutHandler,
     {
         Self {
             inner: Box::new(handler),
@@ -347,6 +399,7 @@ impl Server {
 pub struct ServerBuilder {
     uri: String,
     handlers: Vec<HandlerRegistration>,
+    mut_handlers: Vec<MutHandlerRegistration>,
     notify_shutdown: broadcast::Sender<()>,
     send_events: broadcast::Sender<bytes::Bytes>,
     is_shutdown: bool,
@@ -366,10 +419,11 @@ impl ServerBuilder {
             send_events,
             is_shutdown: false,
             handlers: Vec::new(),
+            mut_handlers: Vec::new(),
         }
     }
 
-    /// Register a new handler on this Server.
+    /// Register a new [`Handler`] on this Server.
     ///
     /// Incoming events from game state integration will be broadcast to all registered handlers.
     pub fn register<H>(mut self, handler: H) -> Self
@@ -386,6 +440,23 @@ impl ServerBuilder {
         self
     }
 
+    /// Register a new [`MutHandler`] on this Server.
+    ///
+    /// Incoming events from game state integration will be broadcast to all registered handlers.
+    pub fn register_mut<H>(mut self, handler: H) -> Self
+    where
+        H: MutHandler,
+    {
+        let registration = MutHandlerRegistration::new(
+            handler,
+            self.notify_shutdown.subscribe(),
+            self.send_events.subscribe(),
+        );
+        self.mut_handlers.push(registration);
+
+        self
+    }
+
     /// Start listening to requests and return a handle to the associated [`Listener`] task.
     pub fn start(self) -> Result<Server, GameStateIntegrationError> {
         if self.is_shutdown {
@@ -398,11 +469,19 @@ impl ServerBuilder {
             self.send_events,
         );
 
+        let iter = self
+            .handlers
+            .into_iter()
+            .map(|h| tokio::spawn(async move { h.run().await }))
+            .chain(
+                self.mut_handlers
+                    .into_iter()
+                    .map(|h| tokio::spawn(async move { h.run().await })),
+            );
+
         Ok(Server::new(
             tokio::spawn(async move { listener.run().await }),
-            self.handlers
-                .into_iter()
-                .map(|h| tokio::spawn(async move { h.run().await })),
+            iter,
             self.notify_shutdown,
         ))
     }
