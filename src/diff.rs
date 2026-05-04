@@ -278,7 +278,10 @@ mod tests {
         let prev = make_ability(1, true, 0, true);
         let cur = make_ability(2, true, 0, true);
         let events = prev.diff(&cur);
-        assert_eq!(events, vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+        );
     }
 
     #[test]
@@ -286,7 +289,10 @@ mod tests {
         let prev = make_ability(1, true, 0, true);
         let cur = make_ability(4, true, 0, true);
         let events = prev.diff(&cur);
-        assert_eq!(events, vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(4))]);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(4))]
+        );
     }
 
     #[test]
@@ -382,7 +388,10 @@ mod tests {
         let prev = GameAbilities::Playing(prev_abilities);
         let cur = GameAbilities::Playing(cur_abilities);
         let events = prev.diff(&cur);
-        assert_eq!(events, vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+        );
     }
 
     #[test]
@@ -422,7 +431,10 @@ mod tests {
         let prev = GameAbilities::Spectating(prev_map);
         let cur = GameAbilities::Spectating(cur_map);
         let events = prev.diff(&cur);
-        assert_eq!(events, vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]);
+        assert_eq!(
+            events,
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+        );
     }
 
     #[test]
@@ -501,10 +513,7 @@ mod tests {
         let prev = make_player_info(0, 1, 0, 0);
         let cur = make_player_info(0, 2, 0, 0);
         let events = prev.diff(&cur);
-        assert_eq!(
-            events,
-            vec![GameEvent::PlayerEvent(PlayerEvent::Died(2))]
-        );
+        assert_eq!(events, vec![GameEvent::PlayerEvent(PlayerEvent::Died(2))]);
     }
 
     #[test]
@@ -526,7 +535,10 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                GameEvent::PlayerEvent(PlayerEvent::SecuredKill { kills: 3, streak: 1 }),
+                GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                    kills: 3,
+                    streak: 1
+                }),
                 GameEvent::PlayerEvent(PlayerEvent::Died(2)),
             ]
         );
@@ -592,7 +604,11 @@ mod tests {
 
         // Both players died — should have 2 death events
         assert_eq!(events.len(), 2);
-        assert!(events.iter().all(|e| matches!(e, GameEvent::PlayerEvent(PlayerEvent::Died(1)))));
+        assert!(
+            events
+                .iter()
+                .all(|e| matches!(e, GameEvent::PlayerEvent(PlayerEvent::Died(1))))
+        );
     }
 
     #[test]
@@ -729,8 +745,13 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                GameEvent::MapEvent(MapEvent::StartedNight { nightstalker: false }),
-                GameEvent::PlayerEvent(PlayerEvent::SecuredKill { kills: 1, streak: 1 }),
+                GameEvent::MapEvent(MapEvent::StartedNight {
+                    nightstalker: false
+                }),
+                GameEvent::PlayerEvent(PlayerEvent::SecuredKill {
+                    kills: 1,
+                    streak: 1
+                }),
             ]
         );
     }
