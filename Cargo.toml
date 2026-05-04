@@ -44,5 +44,6 @@ env_logger = { version = "^0.10" }
 
 
 [features]
+diff = ["models"]
 handlers = []
 models = []

@@ -55,6 +55,10 @@ use tokio::task;
 
 #[cfg(feature = "models")]
 pub mod components;
+#[cfg(feature = "diff")]
+pub mod diff;
+#[cfg(feature = "diff")]
+pub mod event;
 #[cfg(feature = "handlers")]
 pub mod handlers;
 
