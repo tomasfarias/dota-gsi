@@ -945,8 +945,16 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2)),
-                GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(10)),
+                GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                    name: "test_ability".to_string(),
+                    level: 2,
+                    ultimate: false
+                }),
+                GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
+                    name: "test_ability".to_string(),
+                    remaining: 10,
+                    ultimate: false
+                }),
                 GameEvent::PlayerEvent(PlayerEvent::Died {
                     name: "TestPlayer".to_owned(),
                     deaths: 1

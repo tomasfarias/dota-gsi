@@ -12,15 +12,23 @@ pub enum GameEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ability {
     /// An ability's level went up, possibly by more than 1
-    LevelledUp(u8),
+    LevelledUp {
+        name: String,
+        level: u8,
+        ultimate: bool,
+    },
     /// An ability (previously active) went on cooldown
-    WentOnCooldown(u16),
+    WentOnCooldown {
+        name: String,
+        remaining: u16,
+        ultimate: bool,
+    },
     /// An ability (previously in cooldown) went off cooldown
-    WentOffCooldown,
+    WentOffCooldown { name: String, ultimate: bool },
     /// An ability was activated (and it still is active)
-    Activated,
+    Activated { name: String, ultimate: bool },
     /// An ability was deactivated
-    Deactivated,
+    Deactivated { name: String, ultimate: bool },
 }
 
 #[derive(Debug, Clone, PartialEq)]

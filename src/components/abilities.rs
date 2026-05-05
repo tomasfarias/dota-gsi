@@ -51,20 +51,35 @@ impl Diffable for Ability {
         let mut events = Vec::new();
 
         if self.level < new.level {
-            events.push(GameEvent::AbilityEvent(AbilityEvent::LevelledUp(new.level)));
+            events.push(GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                name: self.name.clone(),
+                level: new.level,
+                ultimate: self.ultimate,
+            }));
         }
 
         match (self.can_cast, new.can_cast) {
-            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(
-                new.cooldown,
-            ))),
-            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown)),
+            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
+                name: self.name.clone(),
+                remaining: new.cooldown,
+                ultimate: self.ultimate,
+            })),
+            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown {
+                name: self.name.clone(),
+                ultimate: self.ultimate,
+            })),
             _ => {}
         }
 
         match (self.ability_active, new.ability_active) {
-            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::Deactivated)),
-            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::Activated)),
+            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::Deactivated {
+                name: self.name.clone(),
+                ultimate: self.ultimate,
+            })),
+            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::Activated {
+                name: self.name.clone(),
+                ultimate: self.ultimate,
+            })),
             _ => {}
         }
 
@@ -254,7 +269,11 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                name: "test_ability".to_string(),
+                level: 2,
+                ultimate: false
+            })]
         );
     }
 
@@ -265,7 +284,11 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(4))]
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                name: "test_ability".to_string(),
+                level: 4,
+                ultimate: false
+            })]
         );
     }
 
@@ -276,7 +299,11 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(12))]
+            vec![GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
+                name: "test_ability".to_string(),
+                remaining: 12,
+                ultimate: false
+            })]
         );
     }
 
@@ -287,7 +314,10 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown)]
+            vec![GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown {
+                name: "test_ability".to_string(),
+                ultimate: false
+            })]
         );
     }
 
@@ -306,7 +336,10 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::Activated)]
+            vec![GameEvent::AbilityEvent(AbilityEvent::Activated {
+                name: "test_ability".to_string(),
+                ultimate: false
+            })]
         );
     }
 
@@ -317,7 +350,10 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::Deactivated)]
+            vec![GameEvent::AbilityEvent(AbilityEvent::Deactivated {
+                name: "test_ability".to_string(),
+                ultimate: false
+            })]
         );
     }
 
@@ -329,8 +365,16 @@ pub(crate) mod tests {
         assert_eq!(
             events,
             vec![
-                GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2)),
-                GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown(8)),
+                GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                    name: "test_ability".to_string(),
+                    level: 2,
+                    ultimate: false
+                }),
+                GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
+                    name: "test_ability".to_string(),
+                    remaining: 8,
+                    ultimate: false
+                }),
             ]
         );
     }
@@ -362,7 +406,11 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                name: "test_ability".to_string(),
+                level: 2,
+                ultimate: false
+            })]
         );
     }
 
@@ -403,7 +451,11 @@ pub(crate) mod tests {
         let events = prev.diff(&cur);
         assert_eq!(
             events,
-            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp(2))]
+            vec![GameEvent::AbilityEvent(AbilityEvent::LevelledUp {
+                name: "test_ability".to_string(),
+                level: 2,
+                ultimate: false
+            })]
         );
     }
 
