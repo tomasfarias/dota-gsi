@@ -3,6 +3,8 @@
 pub enum GameEvent {
     /// Events related to hero abilities
     AbilityEvent(Ability),
+    /// Events related to heroes
+    HeroEvent(Hero),
     /// Events related to the state of the Dota 2 map
     MapEvent(Map),
     /// Events related to the player
@@ -29,6 +31,16 @@ pub enum Ability {
     Activated { name: String, ultimate: bool },
     /// An ability was deactivated
     Deactivated { name: String, ultimate: bool },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Hero {
+    /// A hero's level went up, possibly by more than 1
+    LevelledUp {
+        id: i16,
+        name: Option<String>,
+        level: u8,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

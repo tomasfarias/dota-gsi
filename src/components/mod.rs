@@ -312,6 +312,10 @@ impl Diffable for GameState {
             events.extend(players.diff(players_new));
         }
 
+        if let (Some(heroes), Some(heroes_new)) = (self.heroes.as_ref(), new.heroes.as_ref()) {
+            events.extend(heroes.diff(heroes_new));
+        }
+
         events
     }
 }
@@ -319,7 +323,7 @@ impl Diffable for GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{Ability as AbilityEvent, Player as PlayerEvent};
+    use crate::event::{Ability as AbilityEvent, Hero as HeroEvent, Player as PlayerEvent};
     use abilities::{AbilityID, tests::make_ability};
     use players::tests::make_player_info;
 
@@ -961,6 +965,35 @@ mod tests {
                 }),
             ]
         );
+    }
+
+    #[test]
+    fn test_game_state_map_and_hero_events() {
+        let mut hero: Hero =
+            serde_json::from_str(r#"{"id": 136, "level": 1}"#).expect("Failed to deserialize Hero");
+        let mut prev = make_game_state(Some(make_map(true, false)), None, None);
+        prev.heroes = Some(GameHeroes::Playing(hero.clone()));
+        hero.level = Some(2);
+        let mut cur = make_game_state(Some(make_map(false, false)), None, None);
+        cur.heroes = Some(GameHeroes::Playing(hero));
+
+        assert_eq!(
+            prev.diff(&cur),
+            vec![
+                GameEvent::MapEvent(MapEvent::StartedNight {
+                    nightstalker: false,
+                }),
+                GameEvent::HeroEvent(HeroEvent::LevelledUp {
+                    id: 136,
+                    name: None,
+                    level: 2,
+                }),
+            ]
+        );
+
+        let empty = make_game_state(None, None, None);
+        assert!(empty.diff(&cur).is_empty());
+        assert!(cur.diff(&empty).is_empty());
     }
 
     #[test]
