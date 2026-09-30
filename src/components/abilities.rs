@@ -58,13 +58,13 @@ impl Diffable for Ability {
             }));
         }
 
-        match (self.can_cast, new.can_cast) {
-            (true, false) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
+        match (self.cooldown, new.cooldown) {
+            (0, 1..) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
                 name: self.name.clone(),
                 remaining: new.cooldown,
                 ultimate: self.ultimate,
             })),
-            (false, true) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown {
+            (1.., 0) => events.push(GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown {
                 name: self.name.clone(),
                 ultimate: self.ultimate,
             })),
@@ -327,6 +327,39 @@ pub(crate) mod tests {
         let cur = make_ability(1, false, 5, true);
         let events = prev.diff(&cur);
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_ability_cooldown_transitions_when_unable_to_cast() {
+        let ready = make_ability(1, false, 0, true);
+        let on_cooldown = make_ability(1, false, 12, true);
+
+        assert_eq!(
+            ready.diff(&on_cooldown),
+            vec![GameEvent::AbilityEvent(AbilityEvent::WentOnCooldown {
+                name: "test_ability".to_string(),
+                remaining: 12,
+                ultimate: false,
+            })]
+        );
+        assert_eq!(
+            on_cooldown.diff(&ready),
+            vec![GameEvent::AbilityEvent(AbilityEvent::WentOffCooldown {
+                name: "test_ability".to_string(),
+                ultimate: false,
+            })]
+        );
+    }
+
+    #[test]
+    fn test_ability_castability_changes_without_cooldown_transition_no_event() {
+        for cooldown in [0, 5] {
+            let castable = make_ability(1, true, cooldown, true);
+            let uncastable = make_ability(1, false, cooldown, true);
+
+            assert!(castable.diff(&uncastable).is_empty());
+            assert!(uncastable.diff(&castable).is_empty());
+        }
     }
 
     #[test]
